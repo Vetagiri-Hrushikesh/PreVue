@@ -1,97 +1,174 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# PreVue - React Native App Preview Platform
 
-# Getting Started
+A beautiful React Native application for previewing and managing mobile apps with a modern Material Design-inspired UI.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+## 🚀 Features
 
-## Step 1: Start Metro
+- **Beautiful Login Screen**: Modern login interface with social login options
+- **Clean Dashboard**: Minimalistic design with key metrics (Conversions & Users)
+- **Reliable App Preview System**: Native Android preview functionality with retry mechanisms
+- **Bottom Navigation**: Easy navigation between Home and Settings
+- **Organized Codebase**: Clean folder structure with reusable components
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+## 📁 Project Structure
 
-To start the Metro dev server, run the following command from the root of your React Native project:
-
-```sh
-# Using npm
-npm start
-
-# OR using Yarn
-yarn start
+```
+src/
+├── components/          # Reusable UI components
+│   ├── MetricCard.tsx   # Dashboard metric cards
+│   └── AppCard.tsx      # App preview cards
+├── screens/             # Screen components
+│   ├── LoginScreen.tsx  # Login screen
+│   ├── HomeScreen.tsx   # Dashboard screen
+│   ├── SettingsScreen.tsx # Settings screen
+│   └── PreviewScreen.tsx # App preview screen
+├── constants/           # App constants
+│   └── colors.ts        # Color palette and theming
+├── types/               # TypeScript type definitions
+│   └── navigation.ts    # Navigation and app types
+└── utils/               # Utility functions (future use)
 ```
 
-## Step 2: Build and run your app
+## 🎨 Design System
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+### Colors
+- **Primary**: `#1976d2` (Blue)
+- **Secondary**: `#9c27b0` (Purple)
+- **Success**: `#4caf50` (Green)
+- **Warning**: `#ff9800` (Orange)
+- **Error**: `#f44336` (Red)
 
-### Android
+### Components
+- **Clean Dashboard**: Only essential metrics (Conversions & Users)
+- **Reliable Preview**: Loading states and retry mechanisms
+- **Bottom Navigation**: Home and Settings tabs
+- **Consistent Styling**: Material Design-inspired shadows and spacing
 
-```sh
-# Using npm
-npm run android
+## 🔧 Setup & Installation
 
-# OR using Yarn
-yarn android
+1. **Install Dependencies**:
+   ```bash
+   npm install
+   ```
+
+2. **Install Additional Dependencies**:
+   ```bash
+   npm install @react-native-material/core iconsax-react-nativejs react-native-svg
+   ```
+
+3. **Run on Android**:
+   ```bash
+   npx react-native run-android
+   ```
+
+## 🔐 Login Credentials
+
+Use these credentials to login:
+- **Email**: `info@phoenixcoded.co`
+- **Password**: `123456`
+
+## 📱 App Flow
+
+1. **Login Screen**: Beautiful login with social options
+2. **Dashboard**: Clean overview with metrics and app list
+3. **App Preview**: Click "Preview" to see the AwesomeProject (now with loading states)
+4. **Settings**: Access via bottom navigation
+
+## 🛠️ Technical Details
+
+### Native Android Integration
+- **Improved PreviewViewManager**: Added retry mechanisms and better error handling
+- **Reliable Bundle Loading**: Preloading and initialization states
+- **Robust Preview System**: Multiple retry attempts with proper cleanup
+
+### React Native Features
+- **TypeScript**: For type safety
+- **React Navigation**: For routing
+- **Iconsax Icons**: For consistent iconography
+- **Material Design**: Principles and styling
+
+### Performance Optimizations
+- **Loading States**: Proper loading indicators and error handling
+- **Retry Mechanisms**: Automatic retry on failures
+- **Efficient Navigation**: Bottom tab navigation
+- **Clean UI**: Minimalistic design without clutter
+
+## 🎯 Key Components
+
+### MetricCard
+```typescript
+interface Metric {
+  title: string;
+  value: string;
+  change: string;
+  icon: any;
+  color: string;
+  bgColor: string;
+}
 ```
 
-### iOS
-
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
+### AppCard
+```typescript
+interface App {
+  id: string;
+  name: string;
+  lastPreviewed: string;
+  previews: number;
+  rating: number;
+}
 ```
 
-Then, and every time you update your native dependencies, run:
+## 🔄 Navigation Flow
 
-```sh
-bundle exec pod install
+```
+Login → Home (Dashboard) → Preview (AwesomeProject)
+                ↓
+            Settings
 ```
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
+## 📊 Dashboard Metrics
 
-```sh
-# Using npm
-npm run ios
+- **Conversions**: 2,847 (+12.5%)
+- **Users**: 1,234 (+8.2%)
 
-# OR using Yarn
-yarn ios
-```
+## 🎨 UI/UX Features
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+- **Minimalistic Design**: Clean, uncluttered interface
+- **Loading States**: Proper loading indicators for preview
+- **Error Handling**: User-friendly error messages with retry options
+- **Bottom Navigation**: Easy access to Home and Settings
+- **Reliable Preview**: Works consistently on first attempt
+- **Modern Icons**: Iconsax icon library integration
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+## 🔧 Reliability Improvements
 
-## Step 3: Modify your app
+### Preview System
+- **Preloading**: Instance managers are preloaded for faster startup
+- **Retry Mechanism**: Up to 3 automatic retry attempts on failures
+- **Loading States**: Visual feedback during preview loading
+- **Error Recovery**: Proper cleanup and state management
+- **Async Handling**: Better timing for native component initialization
 
-Now that you have successfully run the app, let's make changes!
+### Native Android
+- **Enhanced PreviewViewManager**: Better lifecycle management
+- **Retry Logic**: Automatic retry with exponential backoff
+- **State Tracking**: Proper tracking of initialization states
+- **Memory Management**: Efficient cleanup of unused resources
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+## 🚀 Future Enhancements
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+- [ ] Add more apps to preview
+- [ ] Implement real analytics
+- [ ] Add user profiles
+- [ ] Social sharing features
+- [ ] Push notifications
+- [ ] Dark mode support
+- [ ] Offline preview support
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+## 📝 License
 
-## Congratulations! :tada:
+MIT License - feel free to use this project for your own applications.
 
-You've successfully run and modified your React Native App. :partying_face:
+---
 
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+Built with ❤️ using React Native and modern development practices.
