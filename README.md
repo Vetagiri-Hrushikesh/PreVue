@@ -1,174 +1,240 @@
 # PreVue - React Native App Preview Platform
 
-A beautiful React Native application for previewing and managing mobile apps with a modern Material Design-inspired UI.
+A powerful React Native platform designed to preview and test other React Native applications in a containerized environment. PreVue provides a scalable solution for previewing user-generated React Native apps without requiring dependencies for each individual app.
 
 ## 🚀 Features
 
-- **Beautiful Login Screen**: Modern login interface with social login options
-- **Clean Dashboard**: Minimalistic design with key metrics (Conversions & Users)
-- **Reliable App Preview System**: Native Android preview functionality with retry mechanisms
-- **Bottom Navigation**: Easy navigation between Home and Settings
-- **Organized Codebase**: Clean folder structure with reusable components
+- **Universal App Preview**: Preview any React Native app without adding dependencies
+- **Touch & Scroll Support**: Full touch interaction and scrolling capabilities
+- **Bridge Architecture**: Native module access through bridge system
+- **Scalable Design**: Handle multiple apps without dependency conflicts
+- **Clean Architecture**: Independent of user app dependencies
+- **Real-time Preview**: Instant app loading and switching
 
-## 📁 Project Structure
+## 📱 Screens
 
-```
-src/
-├── components/          # Reusable UI components
-│   ├── MetricCard.tsx   # Dashboard metric cards
-│   └── AppCard.tsx      # App preview cards
-├── screens/             # Screen components
-│   ├── LoginScreen.tsx  # Login screen
-│   ├── HomeScreen.tsx   # Dashboard screen
-│   ├── SettingsScreen.tsx # Settings screen
-│   └── PreviewScreen.tsx # App preview screen
-├── constants/           # App constants
-│   └── colors.ts        # Color palette and theming
-├── types/               # TypeScript type definitions
-│   └── navigation.ts    # Navigation and app types
-└── utils/               # Utility functions (future use)
-```
+### Home Screen
+- Welcome to PreVue platform
+- Quick access to available apps
+- Platform information and status
 
-## 🎨 Design System
+### Preview Screen
+- Embedded app container
+- Touch and scroll support
+- Real-time app preview
+- Bridge functionality for native modules
 
-### Colors
-- **Primary**: `#1976d2` (Blue)
-- **Secondary**: `#9c27b0` (Purple)
-- **Success**: `#4caf50` (Green)
-- **Warning**: `#ff9800` (Orange)
-- **Error**: `#f44336` (Red)
+## 🛠️ Setup & Installation
 
-### Components
-- **Clean Dashboard**: Only essential metrics (Conversions & Users)
-- **Reliable Preview**: Loading states and retry mechanisms
-- **Bottom Navigation**: Home and Settings tabs
-- **Consistent Styling**: Material Design-inspired shadows and spacing
+### Prerequisites
+- Node.js (v16 or higher)
+- React Native CLI
+- Android Studio (for Android development)
+- Xcode (for iOS development, macOS only)
 
-## 🔧 Setup & Installation
+### Installation Steps
 
-1. **Install Dependencies**:
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/Vetagiri-Hrushikesh/PreVue.git
+   cd PreVue
+   ```
+
+2. **Install dependencies**
    ```bash
    npm install
    ```
 
-2. **Install Additional Dependencies**:
+3. **iOS Setup (macOS only)**
    ```bash
-   npm install @react-native-material/core iconsax-react-nativejs react-native-svg
+   cd ios && pod install && cd ..
    ```
 
-3. **Run on Android**:
+4. **Run the app**
    ```bash
+   # For Android
    npx react-native run-android
+   
+   # For iOS
+   npx react-native run-ios
    ```
 
-## 🔐 Login Credentials
+## 📦 App Integration
 
-Use these credentials to login:
-- **Email**: `info@phoenixcoded.co`
-- **Password**: `123456`
+### Adding Apps to PreVue
 
-## 📱 App Flow
+1. **Create app bundle** using the bundling commands from the target app
+2. **Copy bundle to assets directory**:
+   ```bash
+   cp /path/to/app/bundle /path/to/PreVue/android/app/src/main/assets/awesome/
+   ```
+3. **Rebuild PreVue** with the new bundle
+4. **Test integration** in the preview environment
 
-1. **Login Screen**: Beautiful login with social options
-2. **Dashboard**: Clean overview with metrics and app list
-3. **App Preview**: Click "Preview" to see the AwesomeProject (now with loading states)
-4. **Settings**: Access via bottom navigation
+### Bundle Requirements
 
-## 🛠️ Technical Details
+Apps must be bundled with the following specifications:
+- **Platform**: Android
+- **Mode**: Production (--dev false)
+- **Entry**: index.js
+- **Output**: Complete app bundle with assets
 
-### Native Android Integration
-- **Improved PreviewViewManager**: Added retry mechanisms and better error handling
-- **Reliable Bundle Loading**: Preloading and initialization states
-- **Robust Preview System**: Multiple retry attempts with proper cleanup
-
-### React Native Features
-- **TypeScript**: For type safety
-- **React Navigation**: For routing
-- **Iconsax Icons**: For consistent iconography
-- **Material Design**: Principles and styling
-
-### Performance Optimizations
-- **Loading States**: Proper loading indicators and error handling
-- **Retry Mechanisms**: Automatic retry on failures
-- **Efficient Navigation**: Bottom tab navigation
-- **Clean UI**: Minimalistic design without clutter
-
-## 🎯 Key Components
-
-### MetricCard
-```typescript
-interface Metric {
-  title: string;
-  value: string;
-  change: string;
-  icon: any;
-  color: string;
-  bgColor: string;
-}
+### Example Bundle Command
+```bash
+npx react-native bundle \
+  --platform android \
+  --dev false \
+  --entry-file index.js \
+  --bundle-output bundles/AppName/complete-app.bundle \
+  --assets-dest bundles/AppName/
 ```
 
-### AppCard
-```typescript
-interface App {
-  id: string;
-  name: string;
-  lastPreviewed: string;
-  previews: number;
-  rating: number;
-}
+## 🔧 Architecture
+
+### Bridge System
+PreVue implements a bridge architecture that allows embedded apps to access native functionality:
+
+- **Independent Dependencies**: PreVue doesn't require user app dependencies
+- **Bridge Interface**: Embedded apps communicate through bridge
+- **Fallback Handling**: Graceful degradation when native modules aren't available
+- **Permission Management**: Centralized permission handling
+
+### PreviewViewManager
+The core component responsible for embedding React Native apps:
+
+- **Multiple Instance Support**: Handle multiple app instances
+- **Touch Event Handling**: Proper touch and scroll support
+- **Activity Context Management**: Native module support
+- **Error Handling**: Robust error recovery and retry mechanisms
+
+### Key Features
+- **Isolated App Contexts**: Each embedded app runs in its own context
+- **Memory Management**: Proper cleanup and resource management
+- **Performance Optimization**: Efficient bundle loading and caching
+- **Error Recovery**: Automatic retry mechanisms for failed loads
+
+## 🏗️ Project Structure
+
+```
+PreVue/
+├── android/                    # Android-specific files
+│   └── app/
+│       └── src/main/
+│           ├── assets/         # App bundles directory
+│           │   └── awesome/    # Embedded app bundles
+│           └── java/com/prevue/
+│               └── PreviewViewManager.kt  # Core preview manager
+├── ios/                       # iOS-specific files
+├── src/
+│   ├── screens/              # App screens
+│   │   ├── HomeScreen.tsx    # Home screen component
+│   │   └── PreviewScreen.tsx # Preview screen component
+│   └── components/           # Reusable components
+├── App.tsx                   # Main app component
+├── index.js                  # Entry point
+├── package.json              # Dependencies and scripts
+└── README.md                # This file
 ```
 
-## 🔄 Navigation Flow
+## 🔌 Dependencies
 
+### Core Dependencies
+- `react-native`: Core React Native framework
+- `react-native-vector-icons`: Icon library
+
+### Development Dependencies
+- `@types/react`: TypeScript definitions for React
+- `@types/react-native`: TypeScript definitions for React Native
+
+## 🧪 Testing
+
+### Manual Testing
+1. **App Loading**: Test loading different embedded apps
+2. **Touch Interactions**: Verify touch and scroll work in embedded apps
+3. **Navigation**: Test navigation within embedded apps
+4. **Bridge Functionality**: Test native module access through bridge
+
+### Integration Testing
+1. **Bundle Loading**: Ensure app bundles load correctly
+2. **Performance**: Test with multiple app instances
+3. **Memory Usage**: Monitor memory consumption
+4. **Error Handling**: Test error recovery mechanisms
+
+## 🚀 Deployment
+
+### For Development
+1. Follow the setup instructions above
+2. Run the app on device or simulator
+3. Test with various embedded apps
+
+### For Production
+1. Build production APK/IPA
+2. Deploy to app stores or internal distribution
+3. Configure app bundle management system
+
+## 📋 Permissions
+
+PreVue includes comprehensive permissions to support embedded app functionality:
+
+### Android Permissions
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.CAMERA" />
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+<uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+<uses-permission android:name="android.permission.VIBRATE" />
+<uses-permission android:name="android.permission.WAKE_LOCK" />
+<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+<uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+<uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
 ```
-Login → Home (Dashboard) → Preview (AwesomeProject)
-                ↓
-            Settings
-```
 
-## 📊 Dashboard Metrics
+## 🔗 Related Projects
 
-- **Conversions**: 2,847 (+12.5%)
-- **Users**: 1,234 (+8.2%)
+- [AwesomeProject](https://github.com/Vetagiri-Hrushikesh/AwesomeProject.git) - Sample app for PreVue integration
 
-## 🎨 UI/UX Features
+## 🤝 Contributing
 
-- **Minimalistic Design**: Clean, uncluttered interface
-- **Loading States**: Proper loading indicators for preview
-- **Error Handling**: User-friendly error messages with retry options
-- **Bottom Navigation**: Easy access to Home and Settings
-- **Reliable Preview**: Works consistently on first attempt
-- **Modern Icons**: Iconsax icon library integration
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-## 🔧 Reliability Improvements
+## 📄 License
 
-### Preview System
-- **Preloading**: Instance managers are preloaded for faster startup
-- **Retry Mechanism**: Up to 3 automatic retry attempts on failures
-- **Loading States**: Visual feedback during preview loading
-- **Error Recovery**: Proper cleanup and state management
-- **Async Handling**: Better timing for native component initialization
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-### Native Android
-- **Enhanced PreviewViewManager**: Better lifecycle management
-- **Retry Logic**: Automatic retry with exponential backoff
-- **State Tracking**: Proper tracking of initialization states
-- **Memory Management**: Efficient cleanup of unused resources
+## 📞 Support
 
-## 🚀 Future Enhancements
+For support and questions:
+- Create an issue in this repository
+- Contact the development team
+- Check the documentation
 
-- [ ] Add more apps to preview
-- [ ] Implement real analytics
-- [ ] Add user profiles
-- [ ] Social sharing features
-- [ ] Push notifications
-- [ ] Dark mode support
-- [ ] Offline preview support
+## 🎯 Use Cases
 
-## 📝 License
+### App Development
+- **Rapid Prototyping**: Quickly preview app changes
+- **Testing**: Test apps in different environments
+- **Demo**: Showcase apps to stakeholders
 
-MIT License - feel free to use this project for your own applications.
+### Platform Development
+- **App Store**: Preview apps before publishing
+- **Enterprise**: Internal app distribution and testing
+- **Education**: Teaching React Native development
+
+### Integration Scenarios
+- **CI/CD**: Automated app testing
+- **Quality Assurance**: Comprehensive app testing
+- **User Acceptance Testing**: Client app review
 
 ---
 
-Built with ❤️ using React Native and modern development practices.
+**Note**: PreVue is designed to be a universal preview platform. It provides a clean, scalable architecture that can handle any React Native app without requiring dependencies for each individual app. The bridge architecture ensures that embedded apps can access native functionality while maintaining platform independence.

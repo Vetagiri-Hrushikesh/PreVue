@@ -23,7 +23,7 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
         const val REACT_CLASS = "PreviewView"
         private const val TAG = "PreviewViewManager"
         private const val DEFAULT_COMPONENT_NAME = "AwesomeProject"
-        private const val DEFAULT_BUNDLE_PATH = "assets://awesome/index.android.bundle"
+        private const val DEFAULT_BUNDLE_PATH = "assets://awesome/complete-app.bundle"
         private const val PREVUE_COMPONENT_NAME = "PreVue"
         private const val PREVUE_BUNDLE_PATH = "assets://index.android.bundle"
         private const val MAX_RETRY_ATTEMPTS = 3
@@ -171,7 +171,7 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
                     rootView.requestLayout()
                     rootView.invalidate()
                     Log.d(TAG, "React app started successfully for: $currentComponentName")
-                }, 300L) // Increased delay to ensure React app is fully loaded
+                }, 300L) // Delay to ensure React app is fully loaded
                 
             } else {
                 Log.e(TAG, "ReactContext is null, cannot start app: $currentComponentName")
