@@ -17,6 +17,7 @@ import com.facebook.react.uimanager.SimpleViewManager
 import com.facebook.react.uimanager.ThemedReactContext
 import com.facebook.react.uimanager.annotations.ReactProp
 import android.graphics.Rect
+import com.facebook.react.ReactPackage
 
 class PreviewViewManager : SimpleViewManager<ReactRootView>() {
     companion object {
@@ -42,7 +43,12 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
         return object : DefaultReactNativeHost(application) {
             override fun getUseDeveloperSupport(): Boolean = false
             override fun getJSBundleFile(): String? = bundlePath
-            override fun getPackages() = PackageList(this).packages
+            override fun getPackages(): List<ReactPackage> {
+                val packages = PackageList(this).packages.toMutableList()
+                // Add our bridge package to provide native functionality
+                packages.add(EmbeddedAppBridgePackage())
+                return packages
+            }
             override fun getJSMainModuleName(): String = "index"
             override val isNewArchEnabled: Boolean = BuildConfig.IS_NEW_ARCHITECTURE_ENABLED
             override val isHermesEnabled: Boolean = BuildConfig.IS_HERMES_ENABLED
