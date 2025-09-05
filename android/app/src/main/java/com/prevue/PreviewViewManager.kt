@@ -230,8 +230,16 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
                 return
             }
             
-            val bundlePath = "file://${bundleFile.absolutePath}"
+            if (!bundleFile.canRead()) {
+                Log.e(TAG, "Bundle file cannot be read: ${bundleFile.absolutePath}")
+                sendErrorEvent(rootView, "Bundle file cannot be read")
+                return
+            }
+            
+            val bundlePath = bundleFile.absolutePath
             Log.d(TAG, "Starting React app with bundle: $bundlePath")
+            Log.d(TAG, "Bundle file size: ${bundleFile.length()} bytes")
+            Log.d(TAG, "Bundle file readable: ${bundleFile.canRead()}")
             
             val instanceManager = getOrCreateInstanceManager(application, componentName, bundlePath)
             
@@ -252,6 +260,19 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
                 sendPreviewReadyEvent(rootView)
             } else {
                 Log.d(TAG, "ReactContext not ready, setting up listener for: $componentName")
+                Log.d(TAG, "Current ReactContext: ${instanceManager.currentReactContext}")
+                Log.d(TAG, "Initialization state: ${initializationStates[componentName]}")
+                
+                // Force create React context in background
+                Log.d(TAG, "Creating React context in background for: $componentName")
+                try {
+                    instanceManager.createReactContextInBackground()
+                    Log.d(TAG, "React context creation initiated successfully")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error creating React context in background", e)
+                    sendErrorEvent(rootView, "Failed to create React context: ${e.message}")
+                }
+                
                 setupReactContextListener(rootView, instanceManager, componentName)
             }
             
@@ -337,9 +358,11 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
     }
 
     private fun setupReactContextListener(rootView: ReactRootView, instanceManager: ReactInstanceManager, componentName: String) {
+        Log.d(TAG, "Setting up React context listener for: $componentName")
         instanceManager.addReactInstanceEventListener(object : ReactInstanceEventListener {
             override fun onReactContextInitialized(context: ReactContext) {
-                Log.d(TAG, "ReactContext initialized for: $componentName")
+                Log.d(TAG, "🎉 ReactContext initialized for: $componentName")
+                Log.d(TAG, "ReactContext: $context")
                 initializationStates[componentName] = true
                 retryAttempts[componentName] = 0 // Reset retry attempts on success
                 
@@ -360,8 +383,11 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
                 }
                 
                 if (!startedViews.contains(rootView)) {
+                    Log.d(TAG, "🚀 Starting React application for: $componentName")
                     startReactApplication(rootView, instanceManager)
                     sendPreviewReadyEvent(rootView)
+                } else {
+                    Log.d(TAG, "React application already started for: $componentName")
                 }
             }
         })
@@ -371,13 +397,16 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
         try {
             // Ensure the ReactContext is fully ready
             val reactContext = instanceManager.currentReactContext
+            Log.d(TAG, "🔍 startReactApplication called for: $currentComponentName")
+            Log.d(TAG, "ReactContext: $reactContext")
+            
             if (reactContext != null) {
-                Log.d(TAG, "ReactContext is ready, starting app: $currentComponentName")
+                Log.d(TAG, "✅ ReactContext is ready, starting app: $currentComponentName")
                 
                 // Start the React application
                 rootView.startReactApplication(instanceManager, currentComponentName, null)
                 startedViews.add(rootView)
-                Log.d(TAG, "Successfully started React application: $currentComponentName")
+                Log.d(TAG, "🎯 Successfully started React application: $currentComponentName")
                 
                 // Ensure proper view hierarchy and touch handling
                 rootView.postDelayed({
