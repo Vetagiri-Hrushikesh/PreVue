@@ -44,8 +44,8 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
       await login(trimmedEmail, password);
       
       if (scriptedRef.current) {
-        // Navigate to home screen on successful login
-        navigation.replace('Home');
+        // Navigate to MainTabs (Home screen) on successful login
+        navigation.replace('MainTabs');
       }
     } catch (err: any) {
       console.error(err);

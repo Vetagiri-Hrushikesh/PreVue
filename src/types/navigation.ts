@@ -1,8 +1,13 @@
 export type RootStackParamList = {
   Login: undefined;
-  Home: undefined;
-  Settings: undefined;
+  MainTabs: undefined;
   Preview: { appId: string };
+};
+
+export type MainTabParamList = {
+  Home: undefined;
+  MyApps: undefined;
+  Settings: undefined;
 };
 
 export interface Metric {

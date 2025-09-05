@@ -14,7 +14,7 @@ const GuestGuard: React.FC<GuestGuardProps> = ({ children }) => {
   useEffect(() => {
     if (isInitialized && isLoggedIn) {
       // @ts-ignore - navigation type issue
-      navigation.navigate('Home');
+      navigation.navigate('MainTabs');
     }
   }, [isLoggedIn, isInitialized, navigation]);
 

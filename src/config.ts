@@ -1,60 +1,37 @@
-// types
-import { DefaultConfigProps } from './types/config';
+// ==============================|| CONFIG ||============================== //
 
-// ==============================|| THEME CONSTANT ||============================== //
+import { CustomizationProps } from './types/config';
 
-export const APP_DEFAULT_PATH = '/dashboard';
-export const HORIZONTAL_MAX_ITEM = 8;
-export const DRAWER_WIDTH = 280;
-export const MINI_DRAWER_WIDTH = 90;
-export const HEADER_HEIGHT = 74;
-export const GRID_COMMON_SPACING = { xs: 2, md: 2.5 };
-export const APPS_DEFAULT_PATH = '/apps/explorer';
-
-export enum SimpleLayoutType {
-  SIMPLE = 'simple',
-  LANDING = 'landing'
-}
-
-export enum ThemeMode {
-  LIGHT = 'light',
-  DARK = 'dark',
-  AUTO = 'auto'
-}
-
-export enum Gender {
-  MALE = 'Male',
-  FEMALE = 'Female'
-}
-
-export enum MenuOrientation {
-  VERTICAL = 'vertical',
-  HORIZONTAL = 'horizontal'
-}
-
-export enum ThemeDirection {
-  LTR = 'ltr',
-  RTL = 'rtl'
-}
-
-export enum NavActionType {
-  FUNCTION = 'function',
-  LINK = 'link'
-}
-
-// ==============================|| THEME CONFIG ||============================== //
-
-const config: DefaultConfigProps = {
-  fontFamily: `Inter var`,
-  i18n: 'en',
-  menuOrientation: MenuOrientation.VERTICAL,
-  menuCaption: true,
+// Default configuration for React Native app
+const config: CustomizationProps = {
+  // Theme
+  mode: 'light',
+  presetColor: 'default',
+  themeDirection: 'ltr',
+  themeContrast: false,
+  fontFamily: 'Inter',
+  
+  // Layout
+  container: true,
   miniDrawer: false,
-  container: false,
-  mode: ThemeMode.DARK,
-  presetColor: 'theme5',
-  themeDirection: ThemeDirection.LTR,
-  themeContrast: false
+  menuOrientation: 'vertical',
+  menuCaption: false,
+  
+  // Localization
+  i18n: 'en',
+  
+  // Callbacks (will be set by ConfigProvider)
+  onChangeContainer: () => {},
+  onChangeLocalization: () => {},
+  onChangeMode: () => {},
+  onChangePresetColor: () => {},
+  onChangeDirection: () => {},
+  onChangeMiniDrawer: () => {},
+  onChangeThemeLayout: () => {},
+  onChangeMenuOrientation: () => {},
+  onChangeMenuCaption: () => {},
+  onChangeFontFamily: () => {},
+  onChangeContrast: () => {}
 };
 
 export default config;

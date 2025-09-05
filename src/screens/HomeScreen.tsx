@@ -1,182 +1,117 @@
-import React, { useState } from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
-  Pressable,
-  Dimensions,
-  ActivityIndicator,
+  SafeAreaView,
+  TouchableOpacity,
 } from 'react-native';
-import {
-  Chart,
-  Eye,
-  User,
-  Home,
-  Settings,
-  Mobile,
-} from 'iconsax-react-nativejs';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList, Metric, App } from '../types/navigation';
+import { Chart, Chart2, Eye, Mobile } from 'iconsax-react-nativejs';
 import { Colors } from '../constants/colors';
-import AuthGuard from '../components/AuthGuard';
 import useAuth from '../hooks/useAuth';
+import useApps from '../hooks/useApps';
+import AuthGuard from '../components/AuthGuard';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
+const HomeScreen: React.FC = () => {
+  const { user } = useAuth();
+  const { apps } = useApps();
 
-const { width } = Dimensions.get('window');
+  // Calculate analytics
+  const totalApps = apps.length;
+  const activeApps = apps.filter(app => !app.isDeleted && !app.isArchived).length;
+  const totalViews = apps.reduce((sum, app) => sum + (app.views || 0), 0);
 
-const HomeScreen: React.FC<Props> = ({ navigation }) => {
-  const [isLoading, setIsLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('home');
-  const { logout, user } = useAuth();
-
-  const metrics: Metric[] = [
+  const analyticsData = [
     {
-      title: 'Conversions',
-      value: '2,847',
-      change: '+12.5%',
+      title: 'Total Apps',
+      value: totalApps.toString(),
+      icon: Mobile,
+      color: Colors.primary,
+    },
+    {
+      title: 'Active Apps',
+      value: activeApps.toString(),
       icon: Chart,
       color: Colors.success,
-      bgColor: '#E8F5E8',
     },
     {
-      title: 'Users',
-      value: '1,234',
-      change: '+8.2%',
-      icon: User,
-      color: Colors.primary,
-      bgColor: '#E3F2FD',
+      title: 'Total Views',
+      value: totalViews.toString(),
+      icon: Eye,
+      color: Colors.warning,
     },
-  ];
-
-  const recentApps: App[] = [
     {
-      id: 'AwesomeProject',
-      name: 'Awesome Project',
-      lastPreviewed: '2 hours ago',
-      previews: 12,
-      rating: 4.8,
+      title: 'Analytics',
+      value: 'Live',
+      icon: Chart2,
+      color: Colors.secondary,
     },
   ];
-
-  const handlePreviewApp = async (appId: string) => {
-    setIsLoading(true);
-    try {
-      // Add a small delay to ensure the native component is ready
-      await new Promise(resolve => setTimeout(resolve, 100));
-      navigation.navigate('Preview', { appId });
-    } catch (error) {
-      console.error('Navigation error:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleTabPress = (tab: string) => {
-    setActiveTab(tab);
-    if (tab === 'settings') {
-      navigation.navigate('Settings');
-    }
-  };
-
-  const renderMetricCard = (metric: Metric) => {
-    const IconComponent = metric.icon;
-    return (
-      <View key={metric.title} style={styles.metricCard}>
-        <View style={[styles.metricIcon, { backgroundColor: metric.bgColor }]}>
-          <IconComponent size={24} color={metric.color} />
-        </View>
-        <View style={styles.metricContent}>
-          <Text style={styles.metricValue}>{metric.value}</Text>
-          <Text style={styles.metricTitle}>{metric.title}</Text>
-          <Text style={[styles.metricChange, { color: metric.color }]}>
-            {metric.change}
-          </Text>
-        </View>
-      </View>
-    );
-  };
-
-  const renderAppCard = (app: App) => (
-    <View key={app.id} style={styles.appCard}>
-      <View style={styles.appInfo}>
-        <View style={styles.appIcon}>
-          <Mobile size={32} color={Colors.primary} />
-        </View>
-        <View style={styles.appDetails}>
-          <Text style={styles.appName}>{app.name}</Text>
-          <View style={styles.appStats}>
-            <View style={styles.statItem}>
-              <Eye size={16} color={Colors.textSecondary} />
-              <Text style={styles.statText}>{app.previews} previews</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={styles.statText}>• {app.lastPreviewed}</Text>
-            </View>
-          </View>
-        </View>
-      </View>
-      <Pressable
-        style={[styles.previewButton, isLoading && styles.previewButtonDisabled]}
-        onPress={() => handlePreviewApp(app.id)}
-        disabled={isLoading}
-      >
-        {isLoading ? (
-          <ActivityIndicator size="small" color={Colors.white} />
-        ) : (
-          <Text style={styles.previewButtonText}>Preview</Text>
-        )}
-      </Pressable>
-    </View>
-  );
 
   return (
     <AuthGuard>
-      <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>PreVue</Text>
-        <Pressable onPress={logout} style={styles.logoutButton}>
-          <Text style={styles.logoutText}>Logout</Text>
-        </Pressable>
-      </View>
-
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Metrics */}
-        <View style={styles.metricsContainer}>
-          <Text style={styles.sectionTitle}>Overview</Text>
-          <View style={styles.metricsGrid}>
-            {metrics.map(renderMetricCard)}
+      <SafeAreaView style={styles.container}>
+        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+          {/* Header */}
+          <View style={styles.header}>
+            <Text style={styles.welcomeText}>Welcome back,</Text>
+            <Text style={styles.userName}>{user?.displayName || user?.email || 'User'}</Text>
           </View>
-        </View>
 
-        {/* Apps Section */}
-        <View style={styles.appsSection}>
-          <Text style={styles.sectionTitle}>Preview Your Apps</Text>
-          {recentApps.map(renderAppCard)}
-        </View>
-      </ScrollView>
+          {/* Analytics Grid */}
+          <View style={styles.analyticsContainer}>
+            <Text style={styles.sectionTitle}>Overview</Text>
+            <View style={styles.analyticsGrid}>
+              {analyticsData.map((item, index) => {
+                const IconComponent = item.icon;
+                return (
+                  <View key={index} style={styles.analyticsCard}>
+                    <View style={[styles.iconContainer, { backgroundColor: item.color + '20' }]}>
+                      <IconComponent size={24} color={item.color} />
+                    </View>
+                    <Text style={styles.analyticsValue}>{item.value}</Text>
+                    <Text style={styles.analyticsTitle}>{item.title}</Text>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
 
-      {/* Bottom Navigation */}
-      <View style={styles.bottomNav}>
-        <Pressable 
-          style={[styles.navItem, activeTab === 'home' && styles.navItemActive]}
-          onPress={() => handleTabPress('home')}
-        >
-          <Home size={24} color={activeTab === 'home' ? Colors.primary : Colors.textSecondary} />
-          <Text style={[styles.navText, activeTab === 'home' && styles.navTextActive]}>Home</Text>
-        </Pressable>
-        
-        <Pressable 
-          style={[styles.navItem, activeTab === 'settings' && styles.navItemActive]}
-          onPress={() => handleTabPress('settings')}
-        >
-          <Settings size={24} color={activeTab === 'settings' ? Colors.primary : Colors.textSecondary} />
-          <Text style={[styles.navText, activeTab === 'settings' && styles.navTextActive]}>Settings</Text>
-        </Pressable>
-      </View>
-      </View>
+          {/* Quick Actions */}
+          <View style={styles.quickActionsContainer}>
+            <Text style={styles.sectionTitle}>Quick Actions</Text>
+            <View style={styles.quickActionsGrid}>
+              <TouchableOpacity style={styles.quickActionCard}>
+                <View style={[styles.quickActionIcon, { backgroundColor: Colors.primary + '20' }]}>
+                  <Eye size={20} color={Colors.primary} />
+                </View>
+                <Text style={styles.quickActionText}>View Apps</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={styles.quickActionCard}>
+                <View style={[styles.quickActionIcon, { backgroundColor: Colors.success + '20' }]}>
+                  <Chart size={20} color={Colors.success} />
+                </View>
+                <Text style={styles.quickActionText}>Analytics</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Recent Activity */}
+          <View style={styles.recentActivityContainer}>
+            <Text style={styles.sectionTitle}>Recent Activity</Text>
+            <View style={styles.activityCard}>
+              <Text style={styles.activityText}>
+                {totalApps > 0 
+                  ? `You have ${totalApps} app${totalApps === 1 ? '' : 's'} in your collection`
+                  : 'No apps found. Check out your apps in the My Apps tab.'
+                }
+              </Text>
+            </View>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
     </AuthGuard>
   );
 };
@@ -186,40 +121,27 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
-    backgroundColor: Colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.gray[200],
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: Colors.textPrimary,
-  },
-  logoutButton: {
-    backgroundColor: Colors.gray[100],
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.gray[200],
-  },
-  logoutText: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-    fontWeight: '500',
-  },
   scrollView: {
     flex: 1,
+    paddingBottom: 20,
   },
-  metricsContainer: {
+  header: {
     padding: 20,
+    paddingTop: 10,
+  },
+  welcomeText: {
+    fontSize: 16,
+    color: Colors.textSecondary,
+    marginBottom: 4,
+  },
+  userName: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+  },
+  analyticsContainer: {
+    padding: 20,
+    paddingTop: 0,
   },
   sectionTitle: {
     fontSize: 18,
@@ -227,64 +149,18 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     marginBottom: 16,
   },
-  metricsGrid: {
+  analyticsGrid: {
     flexDirection: 'row',
-    gap: 12,
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
   },
-  metricCard: {
-    flex: 1,
-    backgroundColor: Colors.surface,
-    borderRadius: 12,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    shadowColor: Colors.black,
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  metricIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  metricContent: {
-    flex: 1,
-  },
-  metricValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: Colors.textPrimary,
-  },
-  metricTitle: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-    marginTop: 2,
-  },
-  metricChange: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 4,
-  },
-  appsSection: {
-    padding: 20,
-    paddingBottom: 100, // Space for bottom nav
-  },
-  appCard: {
-    backgroundColor: Colors.surface,
+  analyticsCard: {
+    width: '48%',
+    backgroundColor: Colors.white,
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     shadowColor: Colors.black,
     shadowOffset: {
       width: 0,
@@ -292,90 +168,86 @@ const styles = StyleSheet.create({
     },
     shadowOpacity: 0.1,
     shadowRadius: 4,
-    elevation: 2,
+    elevation: 3,
   },
-  appInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  appIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 12,
-    backgroundColor: '#E3F2FD',
-    alignItems: 'center',
+  iconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: 'center',
-    marginRight: 16,
+    alignItems: 'center',
+    marginBottom: 12,
   },
-  appDetails: {
-    flex: 1,
-  },
-  appName: {
-    fontSize: 16,
-    fontWeight: '600',
+  analyticsValue: {
+    fontSize: 20,
+    fontWeight: '700',
     color: Colors.textPrimary,
+    marginBottom: 4,
+  },
+  analyticsTitle: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+  },
+  quickActionsContainer: {
+    padding: 20,
+    paddingTop: 0,
+  },
+  quickActionsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  quickActionCard: {
+    width: '48%',
+    backgroundColor: Colors.white,
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    shadowColor: Colors.black,
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  quickActionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
     marginBottom: 8,
   },
-  appStats: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  statItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  statText: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-  },
-  previewButton: {
-    backgroundColor: Colors.primary,
-    borderRadius: 8,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    minWidth: 80,
-    alignItems: 'center',
-  },
-  previewButtonDisabled: {
-    backgroundColor: Colors.gray[400],
-  },
-  previewButtonText: {
+  quickActionText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: Colors.white,
+    fontWeight: '500',
+    color: Colors.textPrimary,
   },
-  bottomNav: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: Colors.surface,
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: Colors.gray[200],
+  recentActivityContainer: {
+    padding: 20,
+    paddingTop: 0,
+    paddingBottom: 40,
   },
-  navItem: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 8,
+  activityCard: {
+    backgroundColor: Colors.white,
+    borderRadius: 12,
+    padding: 16,
+    shadowColor: Colors.black,
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  navItemActive: {
-    // Active state styling
-  },
-  navText: {
-    fontSize: 12,
+  activityText: {
+    fontSize: 14,
     color: Colors.textSecondary,
-    marginTop: 4,
-  },
-  navTextActive: {
-    color: Colors.primary,
-    fontWeight: '600',
+    lineHeight: 20,
   },
 });
 
-export default HomeScreen; 
+export default HomeScreen;
