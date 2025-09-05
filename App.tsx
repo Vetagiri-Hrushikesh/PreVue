@@ -8,18 +8,22 @@ import HomeScreen from './src/screens/HomeScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import PreviewScreen from './src/screens/PreviewScreen';
 import { RootStackParamList } from './src/types/navigation';
+import { JWTProvider } from './src/contexts/JWTContext';
+import Loader from './src/components/Loader';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const App: React.FC = () => (
-  <NavigationContainer>
-    <Stack.Navigator initialRouteName="Login" screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="Login" component={LoginScreen} />
-      <Stack.Screen name="Home" component={HomeScreen} />
-      <Stack.Screen name="Settings" component={SettingsScreen} />
-      <Stack.Screen name="Preview" component={PreviewScreen} />
-    </Stack.Navigator>
-  </NavigationContainer>
+  <JWTProvider>
+    <NavigationContainer>
+      <Stack.Navigator initialRouteName="Login" screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Login" component={LoginScreen} />
+        <Stack.Screen name="Home" component={HomeScreen} />
+        <Stack.Screen name="Settings" component={SettingsScreen} />
+        <Stack.Screen name="Preview" component={PreviewScreen} />
+      </Stack.Navigator>
+    </NavigationContainer>
+  </JWTProvider>
 );
 
 export default App;

@@ -19,6 +19,8 @@ import {
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList, Metric, App } from '../types/navigation';
 import { Colors } from '../constants/colors';
+import AuthGuard from '../components/AuthGuard';
+import useAuth from '../hooks/useAuth';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
@@ -27,6 +29,7 @@ const { width } = Dimensions.get('window');
 const HomeScreen: React.FC<Props> = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('home');
+  const { logout, user } = useAuth();
 
   const metrics: Metric[] = [
     {
@@ -129,11 +132,12 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
   );
 
   return (
-    <View style={styles.container}>
+    <AuthGuard>
+      <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>PreVue</Text>
-        <Pressable onPress={() => navigation.replace('Login')} style={styles.logoutButton}>
+        <Pressable onPress={logout} style={styles.logoutButton}>
           <Text style={styles.logoutText}>Logout</Text>
         </Pressable>
       </View>
@@ -172,7 +176,8 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
           <Text style={[styles.navText, activeTab === 'settings' && styles.navTextActive]}>Settings</Text>
         </Pressable>
       </View>
-    </View>
+      </View>
+    </AuthGuard>
   );
 };
 

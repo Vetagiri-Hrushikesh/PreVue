@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -19,21 +19,44 @@ import {
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
 import { Colors } from '../constants/colors';
+import useAuth from '../hooks/useAuth';
+import GuestGuard from '../components/GuestGuard';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Login'>;
 
 const LoginScreen: React.FC<Props> = ({ navigation }) => {
-  const [email, setEmail] = useState('info@phoenixcoded.co');
-  const [password, setPassword] = useState('123456');
+  const [email, setEmail] = useState('user@maigha.com');
+  const [password, setPassword] = useState('User@123');
   const [showPassword, setShowPassword] = useState(false);
   const [keepSignedIn, setKeepSignedIn] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleLogin = () => {
-    // Dummy login validation
-    if (email === 'info@phoenixcoded.co' && password === '123456') {
-      navigation.replace('Home');
-    } else {
-      Alert.alert('Login Failed', 'Invalid email or password. Use info@phoenixcoded.co / 123456');
+  const { login, loading } = useAuth();
+  const scriptedRef = useRef(true);
+
+  const handleLogin = async () => {
+    try {
+      setIsSubmitting(true);
+      setError(null);
+      
+      const trimmedEmail = email.trim();
+      await login(trimmedEmail, password);
+      
+      if (scriptedRef.current) {
+        // Navigate to home screen on successful login
+        navigation.replace('Home');
+      }
+    } catch (err: any) {
+      console.error(err);
+      if (scriptedRef.current) {
+        setError(err.message || 'Login failed');
+        Alert.alert('Login Failed', err.message || 'An error occurred during login');
+      }
+    } finally {
+      if (scriptedRef.current) {
+        setIsSubmitting(false);
+      }
     }
   };
 
@@ -42,11 +65,12 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScrollView contentContainerStyle={styles.scrollContainer}>
+    <GuestGuard>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <ScrollView contentContainerStyle={styles.scrollContainer}>
         <View style={styles.card}>
           {/* Header */}
           <View style={styles.header}>
@@ -151,13 +175,27 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
             </Pressable>
           </View>
 
+          {/* Error Display */}
+          {error && (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          )}
+
           {/* Login Button */}
-          <Pressable style={styles.loginButton} onPress={handleLogin}>
-            <Text style={styles.loginButtonText}>Login</Text>
+          <Pressable 
+            style={[styles.loginButton, (isSubmitting || loading?.login) && styles.loginButtonDisabled]} 
+            onPress={handleLogin}
+            disabled={isSubmitting || loading?.login}
+          >
+            <Text style={styles.loginButtonText}>
+              {isSubmitting || loading?.login ? 'Logging in...' : 'Login'}
+            </Text>
           </Pressable>
         </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </GuestGuard>
   );
 };
 
@@ -332,10 +370,27 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     alignItems: 'center',
   },
+  loginButtonDisabled: {
+    backgroundColor: Colors.gray[400],
+    opacity: 0.6,
+  },
   loginButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: Colors.white,
+  },
+  errorContainer: {
+    marginBottom: 16,
+    padding: 12,
+    backgroundColor: '#ffebee',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#f44336',
+  },
+  errorText: {
+    color: '#d32f2f',
+    fontSize: 14,
+    textAlign: 'center',
   },
 });
 
