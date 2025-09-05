@@ -77,13 +77,44 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
         }
     }
 
+    private fun clearAllPreviousBundles(context: Context) {
+        try {
+            Log.d(TAG, "🧹 Clearing ALL previous bundles and instance managers")
+            
+            // 1. Clear all React instance managers
+            instanceManagers.values.forEach { instanceManager ->
+                try {
+                    val activity = context as? Activity
+                    if (activity != null) {
+                        instanceManager.onHostPause(activity)
+                        instanceManager.onHostDestroy(activity)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error destroying instance manager", e)
+                }
+            }
+            instanceManagers.clear()
+            initializationStates.clear()
+            retryAttempts.clear()
+            startedViews.clear()
+            
+            // 2. Clear all cached bundles
+            clearCache(context)
+            
+            Log.d(TAG, "✅ All previous bundles and instance managers cleared")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error clearing previous bundles", e)
+        }
+    }
+
     private fun downloadAndExtractBundle(context: Context, bundleUrl: String, componentName: String, rootView: ReactRootView) {
         executor.execute {
             try {
                 Log.d(TAG, "Starting download from: $bundleUrl")
                 
-                // Clear existing cache
-                clearCache(context)
+                // Clear ALL previous bundles and instance managers
+                clearAllPreviousBundles(context)
                 
                 val url = URL(bundleUrl)
                 val connection = url.openConnection() as HttpURLConnection
@@ -218,14 +249,34 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
         }
     }
 
+    private fun findBundleFile(cacheDir: File): File? {
+        try {
+            // Since we clear all previous bundles, there should only be one bundle file
+            // Look for complete-app.bundle in any subdirectory
+            cacheDir.walkTopDown().forEach { file ->
+                if (file.isFile && file.name == "complete-app.bundle") {
+                    Log.d(TAG, "Found current bundle file: ${file.absolutePath}")
+                    return file
+                }
+            }
+            Log.w(TAG, "No complete-app.bundle file found in cache directory")
+            return null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error finding bundle file", e)
+            return null
+        }
+    }
+
     private fun startReactAppWithExtractedBundle(context: Context, componentName: String, rootView: ReactRootView) {
         try {
             val application = context.applicationContext as Application
             val cacheDir = getCacheDir(context)
-            val bundleFile = File(cacheDir, "$componentName/complete-app.bundle")
             
-            if (!bundleFile.exists()) {
-                Log.e(TAG, "Bundle file not found: ${bundleFile.absolutePath}")
+            // Find the actual bundle file (it might be in a different folder than componentName)
+            val bundleFile = findBundleFile(cacheDir)
+            
+            if (bundleFile == null) {
+                Log.e(TAG, "Bundle file not found in cache directory: ${cacheDir.absolutePath}")
                 sendErrorEvent(rootView, "Bundle file not found after extraction")
                 return
             }
@@ -345,14 +396,9 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
 
         val rootView = ReactRootView(reactContext)
 
-        // If we have a bundle URL, start the download process
-        if (currentBundleUrl != null) {
-            Log.d(TAG, "Bundle URL provided, starting download: $currentBundleUrl")
-            downloadAndExtractBundle(reactContext, currentBundleUrl!!, currentComponentName, rootView)
-        } else {
-            Log.w(TAG, "No bundle URL provided, PreviewView will remain empty")
-            // Could show a placeholder or error message here
-        }
+        // Don't start download here - wait for both componentName and bundleUrl to be set via React props
+        // This prevents downloads with stale/incorrect parameters
+        Log.d(TAG, "PreviewView created, waiting for componentName and bundleUrl to be set via React props")
 
         return rootView
     }
@@ -446,24 +492,8 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
         Log.d(TAG, "onDropViewInstance - tearing down instance for view: $view")
         startedViews.remove(view)
         
-        // Only destroy instance managers if no views are left
-        if (startedViews.isEmpty()) {
-            Log.d(TAG, "No views left, cleaning up all instance managers")
-            instanceManagers.values.forEach { instanceManager ->
-                try {
-                    val activity = view.context as? Activity
-                    if (activity != null) {
-                        instanceManager.onHostPause(activity)
-                        instanceManager.onHostDestroy(activity)
-                    }
-                } catch (t: Throwable) {
-                    Log.w(TAG, "Error during instance manager cleanup", t)
-                }
-            }
-            instanceManagers.clear()
-            initializationStates.clear()
-            retryAttempts.clear()
-        }
+        // Since we clear everything on each new preview, we don't need complex cleanup logic here
+        // The clearAllPreviousBundles function handles all cleanup when a new preview starts
     }
 
     @ReactProp(name = "componentName")
@@ -493,6 +523,7 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
         Log.d(TAG, "setBundleUrl called with: $bundleUrl")
         currentBundleUrl = bundleUrl
         
+        // Only start download if both componentName and bundleUrl are available
         if (bundleUrl != null && currentComponentName.isNotEmpty()) {
             Log.d(TAG, "Starting download process for bundle URL: $bundleUrl with component: $currentComponentName")
             downloadAndExtractBundle(view.context, bundleUrl, currentComponentName, view)
