@@ -11,23 +11,40 @@ import {
   TextInput,
   SafeAreaView,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Eye, SearchNormal1, Refresh } from 'iconsax-react-nativejs';
 import { Colors } from '../constants/colors';
 import useAuth from '../hooks/useAuth';
 import useApps from '../hooks/useApps';
+import { useSSEContext } from '../contexts/SSEContext';
 import { AppData } from '../types/app';
+import { RootStackParamList } from '../types/navigation';
 import AuthGuard from '../components/AuthGuard';
-import { femuxerAPI } from '../api/femuxer';
+import CircularProgress from '../components/CircularProgress';
+
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const MyAppsTabScreen: React.FC = () => {
+  const navigation = useNavigation<NavigationProp>();
   const { user } = useAuth();
   const { 
     apps, 
     loading, 
     error, 
     fetchApps, 
-    refreshApps
+    refreshApps,
+    getProgress,
+    buildBundle,
+    subscribeToCorrelationIds
   } = useApps();
+  
+  // SSE/WebSocket context for real-time updates
+  const { 
+    isConnected, 
+    statusUpdates, 
+    getStatus 
+  } = useSSEContext();
   
   const hasFetched = useRef(false);
   const previousUserId = useRef<string | null>(null);
@@ -35,6 +52,9 @@ const MyAppsTabScreen: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedApp, setSelectedApp] = useState<AppData | null>(null);
   const [buildingApps, setBuildingApps] = useState<Set<string>>(new Set());
+  const [buildProgress, setBuildProgress] = useState<Record<string, number>>({});
+  const [buildMessages, setBuildMessages] = useState<Record<string, string>>({});
+  const [correlationIds, setCorrelationIds] = useState<Record<string, string>>({});
 
   // Reset hasFetched flag when user changes
   useEffect(() => {
@@ -59,6 +79,180 @@ const MyAppsTabScreen: React.FC = () => {
     }
   }, [user?.id, fetchApps, loading.fetch]);
 
+  // Monitor real-time progress updates from WebSocket
+  useEffect(() => {
+    statusUpdates.forEach((update: any, correlationId: string) => {
+      console.log('🔄 [MyAppsTabScreen] Received WebSocket update:', {
+        correlationId,
+        status: update.status,
+        message: update.message,
+        data: update.data,
+        error: update.error,
+        timestamp: update.timestamp
+      });
+      
+      // Find the app ID for this correlation ID
+      const appId = Object.keys(correlationIds).find(id => correlationIds[id] === correlationId);
+      
+      if (appId) {
+        console.log(`🎯 [MyAppsTabScreen] Processing update for app ${appId} (${correlationId})`);
+        
+        if (update.status === 'IN_PROGRESS') {
+          // Use the progress percentage from update.data.progress (like web app)
+          const progressPercentage = update.data?.progress || 0;
+          const progressMessage = update.message || update.data?.stage || 'Building...';
+          
+          setBuildProgress(prev => ({ ...prev, [appId]: progressPercentage }));
+          setBuildMessages(prev => ({ ...prev, [appId]: progressMessage }));
+          
+          console.log(`📊 [MyAppsTabScreen] Progress Update - App: ${appId}, Progress: ${progressPercentage}%, Message: "${progressMessage}"`);
+          console.log(`📊 [MyAppsTabScreen] Full progress data:`, {
+            appId,
+            correlationId,
+            progress: progressPercentage,
+            message: progressMessage,
+            stage: update.data?.stage,
+            status: update.status
+          });
+        } else if (update.status === 'COMPLETED') {
+          setBuildProgress(prev => ({ ...prev, [appId]: 100 }));
+          setBuildMessages(prev => ({ ...prev, [appId]: update.message || 'Build completed!' }));
+          
+          console.log(`✅ [MyAppsTabScreen] Build COMPLETED for app ${appId}`);
+          console.log(`✅ [MyAppsTabScreen] Completion data:`, {
+            appId,
+            correlationId,
+            message: update.message,
+            data: update.data
+          });
+          
+          // Extract download URL from completion data
+          const downloadUrl = update.data?.downloadUrl || update.data?.bundleUrl || update.data?.url;
+          const app = apps.find(a => a.id === appId);
+          
+          console.log(`🔍 [MyAppsTabScreen] Checking for download URL in:`, {
+            downloadUrl: update.data?.downloadUrl,
+            bundleUrl: update.data?.bundleUrl,
+            url: update.data?.url,
+            allData: update.data
+          });
+          
+          if (downloadUrl && app) {
+            console.log(`🔗 [MyAppsTabScreen] Download URL found: ${downloadUrl}`);
+            console.log(`📱 [MyAppsTabScreen] Navigating to PreviewScreen for app: ${app.name}`);
+            
+            // Navigate to PreviewScreen with the download URL
+            navigation.navigate('Preview', {
+              appId: app.id,
+              appName: app.name,
+              bundleUrl: downloadUrl
+            });
+          } else {
+            console.log(`⚠️ [MyAppsTabScreen] No download URL found in completion data`);
+            console.log(`⚠️ [MyAppsTabScreen] Available data keys:`, Object.keys(update.data || {}));
+            console.log(`⚠️ [MyAppsTabScreen] Full data object:`, JSON.stringify(update.data, null, 2));
+            
+            // For testing, let's create a mock URL to see if the download works
+            if (app) {
+              console.log(`🧪 [MyAppsTabScreen] Creating mock URL for testing...`);
+              const mockUrl = `https://httpbin.org/delay/2`; // This will return a simple response after 2 seconds
+              navigation.navigate('Preview', {
+                appId: app.id,
+                appName: app.name,
+                bundleUrl: mockUrl
+              });
+            } else {
+              console.error(`❌ [MyAppsTabScreen] App not found for ID: ${appId}`);
+            }
+          }
+          
+          // Clean up after completion
+          setTimeout(() => {
+            console.log(`🧹 [MyAppsTabScreen] Cleaning up completed build for app ${appId}`);
+            setBuildingApps(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(appId);
+              return newSet;
+            });
+            setBuildProgress(prev => {
+              const newProgress = { ...prev };
+              delete newProgress[appId];
+              return newProgress;
+            });
+            setBuildMessages(prev => {
+              const newMessages = { ...prev };
+              delete newMessages[appId];
+              return newMessages;
+            });
+            setCorrelationIds(prev => {
+              const newIds = { ...prev };
+              delete newIds[appId];
+              return newIds;
+            });
+          }, 2000);
+        } else if (update.status === 'FAILED') {
+          console.log(`❌ [MyAppsTabScreen] Build FAILED for app ${appId}`);
+          console.log(`❌ [MyAppsTabScreen] Failure data:`, {
+            appId,
+            correlationId,
+            error: update.error,
+            message: update.message,
+            data: update.data
+          });
+          
+          // Clean up on failure
+          setBuildingApps(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(appId);
+            return newSet;
+          });
+          setBuildProgress(prev => {
+            const newProgress = { ...prev };
+            delete newProgress[appId];
+            return newProgress;
+          });
+          setBuildMessages(prev => {
+            const newMessages = { ...prev };
+            delete newMessages[appId];
+            return newMessages;
+          });
+          setCorrelationIds(prev => {
+            const newIds = { ...prev };
+            delete newIds[appId];
+            return newIds;
+          });
+        } else if (update.status === 'CANCELLED') {
+          console.log(`🚫 [MyAppsTabScreen] Build CANCELLED for app ${appId}`);
+          
+          // Clean up on cancellation
+          setBuildingApps(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(appId);
+            return newSet;
+          });
+          setBuildProgress(prev => {
+            const newProgress = { ...prev };
+            delete newProgress[appId];
+            return newProgress;
+          });
+          setBuildMessages(prev => {
+            const newMessages = { ...prev };
+            delete newMessages[appId];
+            return newMessages;
+          });
+          setCorrelationIds(prev => {
+            const newIds = { ...prev };
+            delete newIds[appId];
+            return newIds;
+          });
+        }
+      } else {
+        console.log(`⚠️ [MyAppsTabScreen] Received update for unknown correlation ID: ${correlationId}`);
+        console.log(`⚠️ [MyAppsTabScreen] Current correlation IDs:`, correlationIds);
+      }
+    });
+  }, [statusUpdates, correlationIds]);
+
   const onRefresh = async () => {
     setRefreshing(true);
     if (user?.id) {
@@ -68,68 +262,74 @@ const MyAppsTabScreen: React.FC = () => {
   };
 
   const handlePreview = async (app: AppData) => {
-    Alert.alert(
-      'Build App for Preview',
-      `Would you like to build "${app.name}" for preview? This will generate an AAB file.`,
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
+    try {
+      // Add app to building set and initialize progress
+      setBuildingApps(prev => new Set(prev).add(app.id));
+      setBuildProgress(prev => ({ ...prev, [app.id]: 0 }));
+      setBuildMessages(prev => ({ ...prev, [app.id]: 'Starting build...' }));
+      
+      console.log(`[MyAppsTabScreen] Starting bundle build for app: ${app.name} (${app.id})`);
+      
+      // Call buildBundle from useApps hook (proper pattern like web app)
+      const correlationId = await buildBundle(app.id, {
+        verbose: true,
+        force: false,
+        clean: true,
+        signing: {
+          release: false // Use debug signing for preview
         },
-        {
-          text: 'Build',
-          onPress: async () => {
-            try {
-              // Add app to building set
-              setBuildingApps(prev => new Set(prev).add(app.id));
-              
-              console.log(`[MyAppsTabScreen] Starting AAB build for app: ${app.name} (${app.id})`);
-              
-              // Call buildAAB from femuxer API
-              const response = await femuxerAPI.buildAAB(app.id, {
-                verbose: true,
-                force: false,
-                clean: true,
-                signing: {
-                  release: false // Use debug signing for preview
-                },
-                bundle: {
-                  split: false,
-                  universal: true
-                }
-              });
-              
-              console.log(`[MyAppsTabScreen] AAB build response:`, response);
-              
-              if (response.success) {
-                Alert.alert(
-                  'Build Started',
-                  `AAB build for "${app.name}" has been started successfully. You can track the progress in the app.`,
-                  [{ text: 'OK' }]
-                );
-              } else {
-                throw new Error(response.message || 'Build failed');
-              }
-              
-            } catch (error: any) {
-              console.error(`[MyAppsTabScreen] AAB build failed for app ${app.id}:`, error);
-              Alert.alert(
-                'Build Failed',
-                `Failed to start AAB build for "${app.name}": ${error.message || 'Unknown error'}`,
-                [{ text: 'OK' }]
-              );
-            } finally {
-              // Remove app from building set
-              setBuildingApps(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(app.id);
-                return newSet;
-              });
-            }
-          },
-        },
-      ]
-    );
+        bundle: {
+          split: false,
+          universal: true
+        }
+      });
+      
+      console.log(`[MyAppsTabScreen] Bundle build started with correlation ID:`, correlationId);
+      
+      if (correlationId) {
+        
+        // Store correlation ID for this app
+        setCorrelationIds(prev => ({ ...prev, [app.id]: correlationId }));
+        
+        console.log(`🚀 [MyAppsTabScreen] Bundle build started successfully for app: ${app.name}`);
+        console.log(`🆔 [MyAppsTabScreen] Correlation ID: ${correlationId}`);
+        console.log(`📡 [MyAppsTabScreen] Subscribing to WebSocket updates for correlation ID: ${correlationId}`);
+        
+        // Subscribe to real-time updates for this correlation ID
+        await subscribeToCorrelationIds([correlationId]);
+        
+        console.log(`✅ [MyAppsTabScreen] WebSocket subscription successful for correlation ID: ${correlationId}`);
+        console.log(`📊 [MyAppsTabScreen] Waiting for real-time bundle build progress updates...`);
+      } else {
+        console.error(`❌ [MyAppsTabScreen] Build failed - no correlation ID received`);
+        throw new Error('Build failed - no correlation ID received');
+      }
+      
+    } catch (error: any) {
+      console.error(`[MyAppsTabScreen] Bundle build failed for app ${app.id}:`, error);
+      
+      // Clean up on error
+      setBuildingApps(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(app.id);
+        return newSet;
+      });
+      setBuildProgress(prev => {
+        const newProgress = { ...prev };
+        delete newProgress[app.id];
+        return newProgress;
+      });
+      setBuildMessages(prev => {
+        const newMessages = { ...prev };
+        delete newMessages[app.id];
+        return newMessages;
+      });
+      setCorrelationIds(prev => {
+        const newIds = { ...prev };
+        delete newIds[app.id];
+        return newIds;
+      });
+    }
   };
 
   const filteredApps = apps.filter(app =>
@@ -137,67 +337,98 @@ const MyAppsTabScreen: React.FC = () => {
     app.description?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const renderAppItem = ({ item }: { item: AppData }) => (
-    <TouchableOpacity
-      style={styles.appItem}
-      onPress={() => setSelectedApp(item)}
-      activeOpacity={0.7}
-    >
-      <View style={styles.appHeader}>
-        <View style={styles.appInfo}>
-          <Text style={styles.appName} numberOfLines={1}>
-            {item.name}
-          </Text>
-          <Text style={styles.appDescription} numberOfLines={2}>
-            {item.description || 'No description available'}
-          </Text>
-        </View>
-        <View style={styles.appStatus}>
-          <View style={[
-            styles.statusBadge,
-            { backgroundColor: item.isArchived ? Colors.warning + '20' : Colors.success + '20' }
-          ]}>
-            <Text style={[
-              styles.statusText,
-              { color: item.isArchived ? Colors.warning : Colors.success }
-            ]}>
-              {item.isArchived ? 'Archived' : 'Active'}
+  const renderAppItem = ({ item }: { item: AppData }) => {
+    const isBuilding = buildingApps.has(item.id);
+    const hasAnyBuilding = buildingApps.size > 0;
+    const progress = buildProgress[item.id] || 0;
+    const message = buildMessages[item.id] || '';
+
+    return (
+      <TouchableOpacity
+        style={styles.appItem}
+        onPress={() => setSelectedApp(item)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.appHeader}>
+          <View style={styles.appInfo}>
+            <Text style={styles.appName} numberOfLines={1}>
+              {item.name}
+            </Text>
+            <Text style={styles.appDescription} numberOfLines={2}>
+              {item.description || 'No description available'}
             </Text>
           </View>
+          <View style={styles.appStatus}>
+            <View style={[
+              styles.statusBadge,
+              { backgroundColor: item.isArchived ? Colors.warning + '20' : Colors.success + '20' }
+            ]}>
+              <Text style={[
+                styles.statusText,
+                { color: item.isArchived ? Colors.warning : Colors.success }
+              ]}>
+                {item.isArchived ? 'Archived' : 'Active'}
+              </Text>
+            </View>
+          </View>
         </View>
-      </View>
-      
-      <View style={styles.appDetails}>
-        <Text style={styles.appDetailText}>
-          Created: {new Date(item.createdAt).toLocaleDateString()}
-        </Text>
-        <Text style={styles.appDetailText}>
-          Platforms: {item.platforms.join(', ')}
-        </Text>
-      </View>
+        
+        <View style={styles.appDetails}>
+          <View style={styles.leftColumn}>
+            <Text style={styles.appDetailText}>
+              Created: {new Date(item.createdAt).toLocaleDateString()}
+            </Text>
+            <Text style={styles.appDetailText}>
+              Platforms: {item.platforms.join(', ')}
+            </Text>
+          </View>
+          
+          {/* Right Column - Circular Progress Bar */}
+          <View style={styles.rightColumn}>
+            {isBuilding && (
+              <View style={styles.progressContainer}>
+                <CircularProgress
+                  progress={progress}
+                  size={40}
+                  strokeWidth={3}
+                  color={Colors.primary}
+                  backgroundColor={Colors.gray[300]}
+                  showPercentage={true}
+                />
+                {message && (
+                  <Text style={styles.progressMessage} numberOfLines={1}>
+                    {message}
+                  </Text>
+                )}
+              </View>
+            )}
+          </View>
+        </View>
 
-      <TouchableOpacity
-        style={[
-          styles.previewButton,
-          buildingApps.has(item.id) && styles.previewButtonBuilding
-        ]}
-        onPress={() => handlePreview(item)}
-        disabled={buildingApps.has(item.id)}
-      >
-        {buildingApps.has(item.id) ? (
-          <>
-            <Refresh size={16} color={Colors.white} />
-            <Text style={styles.previewButtonText}>Building...</Text>
-          </>
-        ) : (
-          <>
-            <Eye size={16} color={Colors.white} />
-            <Text style={styles.previewButtonText}>Preview</Text>
-          </>
-        )}
+        <TouchableOpacity
+          style={[
+            styles.previewButton,
+            isBuilding && styles.previewButtonBuilding,
+            hasAnyBuilding && !isBuilding && styles.previewButtonDisabled
+          ]}
+          onPress={() => handlePreview(item)}
+          disabled={isBuilding || hasAnyBuilding}
+        >
+                          {isBuilding ? (
+                  <>
+                    <Refresh size={16} color={Colors.white} />
+                    <Text style={styles.previewButtonText}>Bundling...</Text>
+                  </>
+                ) : (
+                  <>
+                    <Eye size={16} color={Colors.white} />
+                    <Text style={styles.previewButtonText}>Preview</Text>
+                  </>
+                )}
+        </TouchableOpacity>
       </TouchableOpacity>
-    </TouchableOpacity>
-  );
+    );
+  };
 
   if (loading.fetch && !hasFetched.current) {
     return (
@@ -362,7 +593,18 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   appDetails: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 12,
+  },
+  leftColumn: {
+    flex: 1,
+  },
+  rightColumn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 60,
   },
   appDetailText: {
     fontSize: 12,
@@ -443,6 +685,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.textSecondary,
     textAlign: 'center',
+  },
+  previewButtonDisabled: {
+    backgroundColor: Colors.gray[400],
+    opacity: 0.6,
+  },
+  progressContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressMessage: {
+    fontSize: 9,
+    color: Colors.textSecondary,
+    marginTop: 4,
+    textAlign: 'center',
+    maxWidth: 60,
   },
 });
 

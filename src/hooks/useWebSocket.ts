@@ -78,7 +78,7 @@ interface UseWebSocketReturn {
 }
 
 /**
- * Production-ready React Native hook for managing WebSocket connections
+ * Production-ready React hook for managing WebSocket connections
  * Features:
  * - Circuit breaker pattern for connection failures
  * - Message queuing for offline scenarios
@@ -99,7 +99,7 @@ export function useWebSocket(): UseWebSocketReturn {
     maxReconnectDelay: 30000,
     connectionTimeout: 15000,
     heartbeatInterval: 30000,
-    heartbeatTimeout: 5000,
+    heartbeatTimeout: 10000,
     messageQueueSize: 100,
     circuitBreakerThreshold: 5,
     circuitBreakerTimeout: 60000
@@ -112,8 +112,6 @@ export function useWebSocket(): UseWebSocketReturn {
   const [connectionHealth, setConnectionHealth] = useState<'healthy' | 'degraded' | 'unhealthy'>('unhealthy');
   const [statusUpdates, setStatusUpdates] = useState<Map<string, WebSocketStatusUpdate>>(new Map());
   const [clientId, setClientId] = useState<string | null>(null);
-
-  // Connection stats
   const [connectionStats, setConnectionStats] = useState({
     totalConnections: 0,
     successfulConnections: 0,
@@ -125,249 +123,346 @@ export function useWebSocket(): UseWebSocketReturn {
   });
 
   // Refs for connection management
-  const wsRef = useRef<WebSocket | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const heartbeatTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const circuitBreakerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Connection state tracking
   const reconnectAttemptsRef = useRef(0);
+  const hasAttemptedInitialConnectionRef = useRef(false);
   const isUnmountingRef = useRef(false);
-  const circuitBreakerRef = useRef({ failures: 0, lastFailureTime: 0, isOpen: false });
+  const lastHeartbeatRef = useRef<number>(0);
+  const circuitBreakerFailuresRef = useRef(0);
+  const isCircuitBreakerOpenRef = useRef(false);
+  
+  // Message queuing for offline scenarios
   const messageQueueRef = useRef<QueuedMessage[]>([]);
   const pendingSubscriptionsRef = useRef<Set<string>>(new Set());
+  const correlationIdSubscriptionsRef = useRef<Set<string>>(new Set());
+
+  // React Native platform info (simplified)
+  const platformInfo = {
+    userAgent: 'ReactNative',
+    platform: 'ReactNative',
+    isWindows: false,
+    isMac: false,
+    isLinux: false,
+    isChrome: false,
+    isFirefox: false,
+    isSafari: false,
+    isEdge: false
+  };
+
+  console.log('🔵 [WS-DEBUG] useWebSocket hook initialized:', {
+    user: user ? { id: user.id, email: user.email } : null,
+    isInitialized,
+    platformInfo,
+    timestamp: new Date().toISOString()
+  });
 
   /**
-   * Calculates exponential backoff delay with jitter
+   * Calculates exponential backoff delay with jitter and platform-specific adjustments
    */
   const calculateReconnectDelay = useCallback((attempt: number): number => {
-    const exponentialDelay = Math.min(
+    let exponentialDelay = Math.min(
       config.baseReconnectDelay * Math.pow(2, attempt - 1),
       config.maxReconnectDelay
     );
     
-    // Add jitter (±25%) to prevent thundering herd
-    const jitter = exponentialDelay * 0.25 * (Math.random() - 0.5);
-    return Math.max(100, exponentialDelay + jitter);
-  }, [config.baseReconnectDelay, config.maxReconnectDelay]);
+    // Platform-specific adjustments
+    if (platformInfo.isWindows) {
+      exponentialDelay *= 1.5; // Windows needs more time
+    } else if (platformInfo.isSafari) {
+      exponentialDelay *= 1.2; // Safari is slower
+    }
+    
+    const jitter = Math.random() * 0.1 * exponentialDelay;
+    return exponentialDelay + jitter;
+  }, [config.baseReconnectDelay, config.maxReconnectDelay, platformInfo]);
 
   /**
-   * Circuit breaker logic
+   * Circuit breaker pattern implementation
    */
-  const checkCircuitBreaker = useCallback((): boolean => {
-    const now = Date.now();
-    const { failures, lastFailureTime, isOpen } = circuitBreakerRef.current;
-
-    if (isOpen && (now - lastFailureTime) > config.circuitBreakerTimeout) {
-      // Reset circuit breaker
-      circuitBreakerRef.current = { failures: 0, lastFailureTime: 0, isOpen: false };
-      console.log('[useWebSocket] Circuit breaker reset');
-      return true;
+  const handleCircuitBreakerFailure = useCallback(() => {
+    circuitBreakerFailuresRef.current++;
+    
+    if (circuitBreakerFailuresRef.current >= config.circuitBreakerThreshold) {
+      isCircuitBreakerOpenRef.current = true;
+      setConnectionHealth('unhealthy');
+      
+      console.error('🔴 [WS-CIRCUIT-BREAKER] Circuit breaker opened due to repeated failures');
+      
+      // Reset circuit breaker after timeout
+      circuitBreakerTimeoutRef.current = setTimeout(() => {
+        isCircuitBreakerOpenRef.current = false;
+        circuitBreakerFailuresRef.current = 0;
+        setConnectionHealth('degraded');
+        console.log('🟡 [WS-CIRCUIT-BREAKER] Circuit breaker reset, attempting reconnection');
+      }, config.circuitBreakerTimeout);
     }
-
-    if (failures >= config.circuitBreakerThreshold) {
-      circuitBreakerRef.current.isOpen = true;
-      console.warn('[useWebSocket] Circuit breaker opened due to too many failures');
-      return false;
-    }
-
-    return true;
   }, [config.circuitBreakerThreshold, config.circuitBreakerTimeout]);
 
-  /**
-   * Cleans up all connection resources
-   */
-  const cleanupConnection = useCallback(() => {
-    // Clear timeouts
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
+  const handleCircuitBreakerSuccess = useCallback(() => {
+    if (circuitBreakerFailuresRef.current > 0) {
+      circuitBreakerFailuresRef.current = Math.max(0, circuitBreakerFailuresRef.current - 1);
     }
-
-    if (heartbeatIntervalRef.current) {
-      clearInterval(heartbeatIntervalRef.current);
-      heartbeatIntervalRef.current = null;
-    }
-
-    if (heartbeatTimeoutRef.current) {
-      clearTimeout(heartbeatTimeoutRef.current);
-      heartbeatTimeoutRef.current = null;
-    }
-
-    if (connectionTimeoutRef.current) {
-      clearTimeout(connectionTimeoutRef.current);
-      connectionTimeoutRef.current = null;
-    }
-
-    // Close WebSocket
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
+    
+    if (isCircuitBreakerOpenRef.current) {
+      isCircuitBreakerOpenRef.current = false;
+      setConnectionHealth('healthy');
+      console.log('🟢 [WS-CIRCUIT-BREAKER] Circuit breaker closed after successful connection');
     }
   }, []);
 
   /**
-   * Starts heartbeat mechanism
+   * Message queuing system for offline scenarios
+   */
+  const queueMessage = useCallback((message: Omit<QueuedMessage, 'id' | 'timestamp' | 'retryCount'>) => {
+    const queuedMessage: QueuedMessage = {
+      ...message,
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      timestamp: Date.now(),
+      retryCount: 0,
+      maxRetries: 3
+    };
+    
+    messageQueueRef.current.push(queuedMessage);
+    
+    // Maintain queue size limit
+    if (messageQueueRef.current.length > config.messageQueueSize) {
+      messageQueueRef.current.shift();
+    }
+    
+    console.log('📦 [WS-QUEUE] Message queued:', queuedMessage.id, 'Queue size:', messageQueueRef.current.length);
+  }, [config.messageQueueSize]);
+
+  const processMessageQueue = useCallback(() => {
+    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    
+    const messagesToProcess = messageQueueRef.current.filter(msg => msg.retryCount < msg.maxRetries);
+    
+    messagesToProcess.forEach(message => {
+      try {
+        const messageData = JSON.stringify({
+          type: message.type,
+          data: message.data,
+          timestamp: new Date().toISOString(),
+          queued: true,
+          queueId: message.id
+        });
+        
+        socketRef.current!.send(messageData);
+        message.retryCount++;
+        
+        console.log('📤 [WS-QUEUE] Processed queued message:', message.id, 'Retry:', message.retryCount);
+        
+        setConnectionStats(prev => ({ ...prev, messagesSent: prev.messagesSent + 1 }));
+      } catch (error) {
+        console.error('🔴 [WS-QUEUE] Failed to process queued message:', message.id, error);
+        message.retryCount++;
+      }
+    });
+    
+    // Remove successfully processed messages
+    messageQueueRef.current = messageQueueRef.current.filter(msg => msg.retryCount < msg.maxRetries);
+  }, []);
+
+  /**
+   * Heartbeat mechanism for connection health monitoring
    */
   const startHeartbeat = useCallback(() => {
     if (heartbeatIntervalRef.current) {
       clearInterval(heartbeatIntervalRef.current);
     }
-
+    
     heartbeatIntervalRef.current = setInterval(() => {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
         try {
-          wsRef.current.send(JSON.stringify({ type: 'ping' }));
-          setConnectionStats(prev => ({ ...prev, messagesSent: prev.messagesSent + 1 }));
-
-          // Set heartbeat timeout
+          const pingMessage = JSON.stringify({
+            type: 'ping',
+            timestamp: Date.now(),
+            clientId: clientId
+          });
+          
+          socketRef.current.send(pingMessage);
+          lastHeartbeatRef.current = Date.now();
+          
+          // Set timeout for pong response
           if (heartbeatTimeoutRef.current) {
             clearTimeout(heartbeatTimeoutRef.current);
           }
-
+          
           heartbeatTimeoutRef.current = setTimeout(() => {
-            console.warn('[useWebSocket] Heartbeat timeout - connection may be dead');
+            console.warn('⚠️ [WS-HEARTBEAT] Pong timeout, connection may be unhealthy');
             setConnectionHealth('degraded');
-            // Don't close connection immediately, let reconnection logic handle it
+            handleCircuitBreakerFailure();
           }, config.heartbeatTimeout);
+          
+          console.log('🏓 [WS-HEARTBEAT] Ping sent');
         } catch (error) {
-          console.error('[useWebSocket] Failed to send heartbeat:', error);
+          console.error('🔴 [WS-HEARTBEAT] Ping failed:', error);
+          handleCircuitBreakerFailure();
         }
       }
     }, config.heartbeatInterval);
-  }, [config.heartbeatInterval, config.heartbeatTimeout]);
+  }, [clientId, config.heartbeatInterval, config.heartbeatTimeout, handleCircuitBreakerFailure]);
 
-  /**
-   * Handles connection timeout
-   */
-  const handleConnectionTimeout = useCallback(() => {
-    console.error('[useWebSocket] Connection timeout');
-    cleanupConnection();
+  const stopHeartbeat = useCallback(() => {
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = null;
+    }
     
-    if (reconnectAttemptsRef.current < config.maxReconnectAttempts) {
-      reconnectAttemptsRef.current++;
-      const delay = calculateReconnectDelay(reconnectAttemptsRef.current);
-      console.log(`[useWebSocket] Attempting reconnection ${reconnectAttemptsRef.current}/${config.maxReconnectAttempts} in ${delay}ms`);
-      
-      reconnectTimeoutRef.current = setTimeout(() => {
-        if (!isUnmountingRef.current) {
-          connect();
-        }
-      }, delay);
-    } else {
-      console.error('[useWebSocket] Max reconnection attempts reached');
-      setConnectionError('Failed to establish WebSocket connection after multiple attempts');
-      setIsConnected(false);
-      setIsConnecting(false);
-      setConnectionHealth('unhealthy');
-    }
-  }, [cleanupConnection, calculateReconnectDelay, config.maxReconnectAttempts]);
-
-  /**
-   * Processes queued messages
-   */
-  const processMessageQueue = useCallback(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    const queue = messageQueueRef.current;
-    while (queue.length > 0) {
-      const message = queue.shift();
-      if (message) {
-        try {
-          wsRef.current.send(JSON.stringify({
-            type: message.type,
-            data: message.data,
-            id: message.id
-          }));
-          setConnectionStats(prev => ({ ...prev, messagesSent: prev.messagesSent + 1 }));
-        } catch (error) {
-          console.error('[useWebSocket] Failed to send queued message:', error);
-          // Re-queue message if it hasn't exceeded max retries
-          if (message.retryCount < message.maxRetries) {
-            message.retryCount++;
-            queue.unshift(message);
-          }
-        }
-      }
+    if (heartbeatTimeoutRef.current) {
+      clearTimeout(heartbeatTimeoutRef.current);
+      heartbeatTimeoutRef.current = null;
     }
   }, []);
 
   /**
-   * Establishes WebSocket connection
+   * Connection validation and health checks
+   */
+  const validateConnection = useCallback((): boolean => {
+    if (!socketRef.current) {
+      return false;
+    }
+    
+    const readyState = socketRef.current.readyState;
+    const isOpen = readyState === WebSocket.OPEN;
+    const timeSinceLastHeartbeat = Date.now() - lastHeartbeatRef.current;
+    
+    // Connection is healthy if:
+    // 1. WebSocket is open
+    // 2. We've received a heartbeat within the timeout period
+    // 3. Circuit breaker is not open
+    const isHealthy = isOpen && 
+                     timeSinceLastHeartbeat < config.heartbeatTimeout * 2 && 
+                     !isCircuitBreakerOpenRef.current;
+    
+    if (isHealthy) {
+      setConnectionHealth('healthy');
+      handleCircuitBreakerSuccess();
+    } else if (isOpen) {
+      setConnectionHealth('degraded');
+    } else {
+      setConnectionHealth('unhealthy');
+    }
+    
+    return isHealthy;
+  }, [config.heartbeatTimeout, handleCircuitBreakerSuccess]);
+
+  /**
+   * Disconnects the WebSocket connection
+   */
+  const disconnect = useCallback(() => {
+    console.log('🔵 [WS-DISCONNECT] Disconnecting WebSocket...');
+    
+    // Clear all timeouts and intervals
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    
+    if (connectionTimeoutRef.current) {
+      clearTimeout(connectionTimeoutRef.current);
+      connectionTimeoutRef.current = null;
+    }
+    
+    if (circuitBreakerTimeoutRef.current) {
+      clearTimeout(circuitBreakerTimeoutRef.current);
+      circuitBreakerTimeoutRef.current = null;
+    }
+    
+    stopHeartbeat();
+    
+    // Close WebSocket connection
+    if (socketRef.current) {
+      socketRef.current.close(1000, 'User initiated disconnect');
+      socketRef.current = null;
+    }
+    
+    setIsConnected(false);
+    setIsConnecting(false);
+    setConnectionError(null);
+    setConnectionHealth('unhealthy');
+    reconnectAttemptsRef.current = 0;
+    
+    setConnectionStats(prev => ({
+      ...prev,
+      lastDisconnectedAt: new Date().toISOString()
+    }));
+  }, [stopHeartbeat]);
+
+  /**
+   * Connects to the WebSocket server with production-ready error handling
    */
   const connect = useCallback(async (correlationIds?: string[]) => {
-    console.log('[useWebSocket] Starting connection attempt:', {
-      user: user ? { id: user.id, email: user.email } : null,
-      isInitialized,
-      correlationIds
-    });
+    if (isUnmountingRef.current) {
+      console.log('🔵 [WS-CONNECT] Component unmounting, skipping connection');
+      return;
+    }
 
-    if (!user?.id || !isInitialized) {
-      const error = 'User not authenticated';
-      console.error('[useWebSocket] Authentication failed:', { userId: user?.id, isInitialized, error });
-      setConnectionError(error);
+    if (isConnecting || isConnected) {
+      console.log('🔵 [WS-CONNECT] Already connecting or connected, skipping');
+      return;
+    }
+
+    if (!user?.id) {
+      console.log('🔵 [WS-CONNECT] No user ID available, skipping connection');
       return;
     }
 
     // Check circuit breaker
-    if (!checkCircuitBreaker()) {
-      const error = 'Circuit breaker is open - too many connection failures';
-      console.error('[useWebSocket] Circuit breaker blocked connection:', error);
-      setConnectionError(error);
+    if (isCircuitBreakerOpenRef.current) {
+      console.log('🔴 [WS-CONNECT] Circuit breaker is open, skipping connection');
       return;
     }
-
-    // Prevent multiple simultaneous connections
-    if (isConnected || isConnecting) {
-      console.log('[useWebSocket] Connection already in progress:', { isConnected, isConnecting });
-      return;
-    }
-
-    // Clean up any existing connection first
-    cleanupConnection();
 
     setIsConnecting(true);
     setConnectionError(null);
-    setConnectionStats(prev => ({ ...prev, totalConnections: prev.totalConnections + 1 }));
+    hasAttemptedInitialConnectionRef.current = true;
 
     try {
-      // Build WebSocket URL
-      const baseUrl = 'http://192.168.0.3:5050'; // Use your IP address
-      const params = new URLSearchParams({
-        userId: user.id,
-        ...(correlationIds && correlationIds.length > 0 && { 
-          correlationIds: correlationIds.join(',') 
-        })
+      console.log('🔵 [WS-CONNECT] Creating WebSocket connection...', {
+        platformInfo,
+        attempt: reconnectAttemptsRef.current + 1
       });
-
-      const wsUrl = `ws://192.168.0.3:5050/ws?${params.toString()}`;
       
-      console.log('[useWebSocket] Building connection URL:', {
-        baseUrl,
-        userId: user.id,
-        correlationIds,
-        fullUrl: wsUrl
-      });
-
-      // Create WebSocket
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      // React Native specific WebSocket URL
+      const baseUrl = 'http://192.168.0.3:5050';
+      const wsUrl = baseUrl.replace('http', 'ws') + '/ws';
+      
+      console.log('🔵 [WS-CONNECT] WebSocket URL:', wsUrl);
+      
+      const socket = new WebSocket(wsUrl);
+      socketRef.current = socket;
+      
+      setConnectionStats(prev => ({ ...prev, totalConnections: prev.totalConnections + 1 }));
 
       // Set connection timeout
       connectionTimeoutRef.current = setTimeout(() => {
-        if (ws.readyState === WebSocket.CONNECTING) {
-          console.error('[useWebSocket] Connection timeout - readyState still CONNECTING');
-          ws.close();
-          handleConnectionTimeout();
+        if (socket.readyState === WebSocket.CONNECTING) {
+          console.error('🔴 [WS-CONNECT] Connection timeout');
+          socket.close();
+          setConnectionError('Connection timeout');
+          setIsConnecting(false);
+          handleCircuitBreakerFailure();
         }
       }, config.connectionTimeout);
 
-      // Handle connection open
-      ws.onopen = (event) => {
-        console.log('[useWebSocket] WebSocket connection opened:', event);
-        
-        // Clear connection timeout
+      socket.onopen = (event) => {
+        console.log('🟢 [WS-CONNECT] WebSocket connected:', {
+          readyState: socket.readyState,
+          url: socket.url,
+          platformInfo,
+          timestamp: new Date().toISOString()
+        });
+
         if (connectionTimeoutRef.current) {
           clearTimeout(connectionTimeoutRef.current);
           connectionTimeoutRef.current = null;
@@ -378,87 +473,54 @@ export function useWebSocket(): UseWebSocketReturn {
         setConnectionError(null);
         setConnectionHealth('healthy');
         reconnectAttemptsRef.current = 0;
-        circuitBreakerRef.current.failures = 0;
-
+        
         setConnectionStats(prev => ({
           ...prev,
           successfulConnections: prev.successfulConnections + 1,
           lastConnectedAt: new Date().toISOString()
         }));
 
-        // Start heartbeat
+        handleCircuitBreakerSuccess();
+
+        // Send authentication message with retry mechanism
+        const sendAuth = () => {
+          try {
+            const authMessage = JSON.stringify({
+              type: 'authenticate',
+              data: { userId: user.id },
+              timestamp: new Date().toISOString()
+            });
+            console.log('🔐 [WS-AUTH] Sending authentication:', authMessage);
+            socket.send(authMessage);
+            setConnectionStats(prev => ({ ...prev, messagesSent: prev.messagesSent + 1 }));
+          } catch (error) {
+            console.error('🔴 [WS-AUTH] Failed to send authentication:', error);
+            // Retry authentication after a short delay
+            setTimeout(sendAuth, 1000);
+          }
+        };
+        
+        sendAuth();
+        
+        // Start heartbeat mechanism
         startHeartbeat();
-
-        // Process queued messages
+        
+        // Process any queued messages
         processMessageQueue();
-
-        // Retry pending subscriptions
-        if (pendingSubscriptionsRef.current.size > 0) {
-          const pendingIds = Array.from(pendingSubscriptionsRef.current);
-          pendingSubscriptionsRef.current.clear();
-          subscribeToCorrelationIds(pendingIds);
-        }
       };
 
-      // Handle connection errors
-      ws.onerror = (event) => {
-        console.error('[useWebSocket] WebSocket error:', event);
+      socket.onmessage = (event) => {
+        console.log('📥 [DEVPORTAL-WebSocket] Raw message received:', event.data);
         
-        // Clear connection timeout
-        if (connectionTimeoutRef.current) {
-          clearTimeout(connectionTimeoutRef.current);
-          connectionTimeoutRef.current = null;
-        }
-
-        // Update circuit breaker
-        circuitBreakerRef.current.failures++;
-        circuitBreakerRef.current.lastFailureTime = Date.now();
-
-        setConnectionStats(prev => ({
-          ...prev,
-          failedConnections: prev.failedConnections + 1,
-          lastDisconnectedAt: new Date().toISOString()
-        }));
-
-        // Only handle error if we're still connecting
-        if (ws.readyState === WebSocket.CONNECTING) {
-          handleConnectionTimeout();
-        }
-      };
-
-      // Handle connection close
-      ws.onclose = (event) => {
-        console.log('[useWebSocket] WebSocket connection closed:', event);
+        setConnectionStats(prev => ({ ...prev, messagesReceived: prev.messagesReceived + 1 }));
         
-        // Clear connection timeout
-        if (connectionTimeoutRef.current) {
-          clearTimeout(connectionTimeoutRef.current);
-          connectionTimeoutRef.current = null;
-        }
-
-        setIsConnected(false);
-        setIsConnecting(false);
-        setConnectionHealth('unhealthy');
-
-        setConnectionStats(prev => ({
-          ...prev,
-          lastDisconnectedAt: new Date().toISOString()
-        }));
-
-        // Attempt reconnection if not manually closed
-        if (!isUnmountingRef.current && event.code !== 1000) {
-          handleConnectionTimeout();
-        }
-      };
-
-      // Handle incoming messages
-      ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data);
-          setConnectionStats(prev => ({ ...prev, messagesReceived: prev.messagesReceived + 1 }));
+          const message = JSON.parse(event.data);
+          console.log('🔵 [DEVPORTAL-WebSocket] Parsed message:', message);
 
-          // Clear heartbeat timeout on pong
-          if (data.type === 'pong') {
+          // Handle pong responses
+          if (message.type === 'pong') {
+            console.log('🏓 [WS-HEARTBEAT] Pong received');
             if (heartbeatTimeoutRef.current) {
               clearTimeout(heartbeatTimeoutRef.current);
               heartbeatTimeoutRef.current = null;
@@ -467,219 +529,300 @@ export function useWebSocket(): UseWebSocketReturn {
             return;
           }
 
-          // Handle connection event
-          if (data.type === 'connection') {
-            console.log('[useWebSocket] Connection event received:', data);
-            setClientId(data.clientId);
-            return;
-          }
-
-          // Handle status updates
-          if (data.type === 'status_update') {
-            console.log('[useWebSocket] Status update received:', data);
+          if (message.type === 'connection_established') {
+            setClientId(message.data.clientId);
+            console.log('🟢 [DEVPORTAL-WebSocket] Client ID received:', message.data.clientId);
+          } else if (message.type === 'authenticated') {
+            console.log('🟢 [DEVPORTAL-WebSocket] Authentication successful:', message.data);
+          } else if (message.type === 'app.created' || message.type === 'app.created.error') {
+            // Handle app creation status updates
+            console.log('🎯 [DEVPORTAL-WebSocket] App creation status update received:', message);
             
-            setStatusUpdates(prev => {
-              const newMap = new Map(prev);
-              newMap.set(data.correlationId, {
-                correlationId: data.correlationId,
-                status: data.status,
-                message: data.message,
-                data: data.data,
-                error: data.error,
-                timestamp: data.timestamp || new Date().toISOString()
-              });
-              return newMap;
-            });
-            return;
-          }
+            const statusUpdate: WebSocketStatusUpdate = {
+              correlationId: message.correlationId,
+              status: message.type === 'app.created.error' ? 'FAILED' : 'COMPLETED',
+              message: message.data?.message || 'Operation completed',
+              data: message.data?.app || message.data,
+              error: message.data?.error,
+              timestamp: message.timestamp || new Date().toISOString()
+            };
 
-          console.log('[useWebSocket] Unhandled message type:', data.type, data);
+            console.log('📊 [DEVPORTAL-WebSocket] Status update created:', statusUpdate);
+            setStatusUpdates(prev => new Map(prev).set(message.correlationId, statusUpdate));
+            console.log('🟢 [DEVPORTAL-WebSocket] Status update stored for correlation ID:', message.correlationId);
+          } else if (message.type === 'app.response.permanentDelete' || message.type === 'app.response.permanentDelete.sse') {
+            // Handle permanent delete status updates
+            console.log('🗑️ [DEVPORTAL-WebSocket] App permanent delete status update received:', message);
+            
+            const statusUpdate: WebSocketStatusUpdate = {
+              correlationId: message.correlationId,
+              status: message.data?.success ? 'COMPLETED' : 'FAILED',
+              message: message.data?.message || 'Permanent delete operation completed',
+              data: message.data,
+              error: message.data?.error,
+              timestamp: message.timestamp || new Date().toISOString()
+            };
+
+            console.log('📊 [DEVPORTAL-WebSocket] Permanent delete status update created:', statusUpdate);
+            setStatusUpdates(prev => new Map(prev).set(message.correlationId, statusUpdate));
+            console.log('🟢 [DEVPORTAL-WebSocket] Permanent delete status update stored for correlation ID:', message.correlationId);
+          } else if (message.type === 'app.creation.progress') {
+            // Handle real-time progress updates
+            console.log('📈 [DEVPORTAL-WebSocket] Progress update received:', message);
+            
+            const progressUpdate: WebSocketStatusUpdate = {
+              correlationId: message.correlationId,
+              status: 'IN_PROGRESS',
+              message: `${message.data.progress}% - ${message.data.message}`,
+              data: {
+                progress: message.data.progress,
+                stage: message.data.stage,
+                message: message.data.message
+              },
+              timestamp: message.timestamp || new Date().toISOString()
+            };
+
+            console.log('📊 [DEVPORTAL-WebSocket] Progress update created:', progressUpdate);
+            setStatusUpdates(prev => new Map(prev).set(message.correlationId, progressUpdate));
+            console.log('🟢 [DEVPORTAL-WebSocket] Progress update stored for correlation ID:', message.correlationId);
+          } else if (message.type === 'app.buildBundle.progress') {
+            // Handle build bundle progress updates
+            console.log('🔨 [DEVPORTAL-WebSocket] Build progress update received:', message);
+            
+            // Determine status based on progress value
+            const isCompleted = message.data.progress === 100;
+            const status = isCompleted ? 'COMPLETED' : 'IN_PROGRESS';
+            
+            const buildProgressUpdate: WebSocketStatusUpdate = {
+              correlationId: message.correlationId,
+              status,
+              message: `${message.data.progress}% - ${message.data.message}`,
+              data: {
+                progress: message.data.progress,
+                stage: message.data.stage || 'Building AAB',
+                message: message.data.message
+              },
+              timestamp: message.timestamp || new Date().toISOString()
+            };
+
+            console.log('📊 [DEVPORTAL-WebSocket] Build progress update created:', buildProgressUpdate);
+            setStatusUpdates(prev => new Map(prev).set(message.correlationId, buildProgressUpdate));
+            console.log('🟢 [DEVPORTAL-WebSocket] Build progress update stored for correlation ID:', message.correlationId);
+          } else if (message.type === 'app.bundle.progress') {
+            // Handle bundle progress updates
+            console.log('📦 [DEVPORTAL-WebSocket] Bundle progress update received:', message);
+            
+            // Determine status based on progress value
+            const isCompleted = message.data.progress === 100;
+            const status = isCompleted ? 'COMPLETED' : 'IN_PROGRESS';
+            
+            const bundleProgressUpdate: WebSocketStatusUpdate = {
+              correlationId: message.correlationId,
+              status,
+              message: `${message.data.progress}% - ${message.data.message}`,
+              data: {
+                progress: message.data.progress,
+                stage: message.data.stage || 'Building Bundle',
+                message: message.data.message,
+                downloadUrl: message.data.downloadUrl // Include download URL for bundle completion
+              },
+              timestamp: message.timestamp || new Date().toISOString()
+            };
+
+            console.log('📊 [DEVPORTAL-WebSocket] Bundle progress update created:', bundleProgressUpdate);
+            setStatusUpdates(prev => new Map(prev).set(message.correlationId, bundleProgressUpdate));
+            console.log('🟢 [DEVPORTAL-WebSocket] Bundle progress update stored for correlation ID:', message.correlationId);
+          } else if (message.type === 'app.buildDebug.progress') {
+            // Handle build debug progress updates
+            console.log('🐛 [DEVPORTAL-WebSocket] Build debug progress update received:', message);
+            
+            // Determine status based on progress value
+            const isCompleted = message.data.progress === 100;
+            const status = isCompleted ? 'COMPLETED' : 'IN_PROGRESS';
+            
+            const buildDebugProgressUpdate: WebSocketStatusUpdate = {
+              correlationId: message.correlationId,
+              status,
+              message: `${message.data.progress}% - ${message.data.message}`,
+              data: {
+                progress: message.data.progress,
+                stage: message.data.stage || 'Building Debug APK',
+                message: message.data.message
+              },
+              timestamp: message.timestamp || new Date().toISOString()
+            };
+
+            console.log('📊 [DEVPORTAL-WebSocket] Build debug progress update created:', buildDebugProgressUpdate);
+            setStatusUpdates(prev => new Map(prev).set(message.correlationId, buildDebugProgressUpdate));
+            console.log('🟢 [DEVPORTAL-WebSocket] Build debug progress update stored for correlation ID:', message.correlationId);
+          } else if (message.type === 'app.buildRelease.progress') {
+            // Handle build release progress updates
+            console.log('🚀 [DEVPORTAL-WebSocket] Build release progress update received:', message);
+            
+            // Determine status based on progress value
+            const isCompleted = message.data.progress === 100;
+            const status = isCompleted ? 'COMPLETED' : 'IN_PROGRESS';
+            
+            const buildReleaseProgressUpdate: WebSocketStatusUpdate = {
+              correlationId: message.correlationId,
+              status,
+              message: `${message.data.progress}% - ${message.data.message}`,
+              data: {
+                progress: message.data.progress,
+                stage: message.data.stage || 'Building Release APK',
+                message: message.data.message
+              },
+              timestamp: message.timestamp || new Date().toISOString()
+            };
+
+            console.log('📊 [DEVPORTAL-WebSocket] Build release progress update created:', buildReleaseProgressUpdate);
+            setStatusUpdates(prev => new Map(prev).set(message.correlationId, buildReleaseProgressUpdate));
+            console.log('🟢 [DEVPORTAL-WebSocket] Build release progress update stored for correlation ID:', message.correlationId);
+          } else if (message.type === 'error') {
+            console.error('🔴 [DEVPORTAL-WebSocket] Server error:', message.data);
+          } else {
+            console.log('ℹ️ [DEVPORTAL-WebSocket] Unknown message type:', message.type);
+          }
         } catch (error) {
-          console.error('[useWebSocket] Failed to parse message:', error, event.data);
+          console.error('🔴 [DEVPORTAL-WebSocket] Failed to parse message:', error, event.data);
         }
       };
 
-    } catch (error: any) {
-      console.error('[useWebSocket] Failed to establish WebSocket connection:', error);
-      setConnectionError(error.message || 'Failed to connect to WebSocket');
+      socket.onerror = (error: any) => {
+        console.error('🔴 [WS-ERROR] WebSocket error:', error, {
+          readyState: socket.readyState,
+          url: socket.url,
+          platformInfo,
+          attempt: reconnectAttemptsRef.current + 1
+        });
+        setConnectionError('WebSocket connection error');
+        handleCircuitBreakerFailure();
+      };
+
+      socket.onclose = (event: any) => {
+        console.log('🔵 [WS-CLOSE] WebSocket closed:', {
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean || false,
+          platformInfo,
+          attempt: reconnectAttemptsRef.current + 1
+        });
+
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+
+        stopHeartbeat();
+        setIsConnected(false);
+        setIsConnecting(false);
+        setConnectionHealth('unhealthy');
+        
+        setConnectionStats(prev => ({
+          ...prev,
+          failedConnections: prev.failedConnections + 1,
+          lastDisconnectedAt: new Date().toISOString()
+        }));
+
+        // Attempt reconnection if not a clean close and not unmounting
+        if (!(event.wasClean || false) && !isUnmountingRef.current && reconnectAttemptsRef.current < config.maxReconnectAttempts) {
+          const delay = calculateReconnectDelay(reconnectAttemptsRef.current + 1);
+          console.log(`🔵 [WS-RECONNECT] Attempting reconnection in ${delay}ms (attempt ${reconnectAttemptsRef.current + 1}/${config.maxReconnectAttempts})`);
+          
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectAttemptsRef.current++;
+            connect(correlationIds);
+          }, delay);
+        } else if (reconnectAttemptsRef.current >= config.maxReconnectAttempts) {
+          console.error('🔴 [WS-RECONNECT] Max reconnection attempts reached');
+          setConnectionError('Max reconnection attempts reached');
+          handleCircuitBreakerFailure();
+        }
+      };
+
+    } catch (error) {
+      console.error('🔴 [WS-CONNECT] Failed to create WebSocket:', error);
+      setConnectionError(error instanceof Error ? error.message : 'Failed to connect');
       setIsConnecting(false);
-      setConnectionHealth('unhealthy');
+      handleCircuitBreakerFailure();
     }
-  }, [user?.id, isInitialized, isConnected, isConnecting, cleanupConnection, handleConnectionTimeout, calculateReconnectDelay, checkCircuitBreaker, startHeartbeat, processMessageQueue]);
+  }, [user?.id, calculateReconnectDelay, config, platformInfo, startHeartbeat, stopHeartbeat, processMessageQueue, handleCircuitBreakerFailure, handleCircuitBreakerSuccess]);
 
   /**
-   * Disconnects from WebSocket
-   */
-  const disconnect = useCallback(() => {
-    console.log('[useWebSocket] Disconnecting from WebSocket');
-    
-    isUnmountingRef.current = true;
-    cleanupConnection();
-
-    setIsConnected(false);
-    setIsConnecting(false);
-    setConnectionError(null);
-    setConnectionHealth('unhealthy');
-    setClientId(null);
-    reconnectAttemptsRef.current = 0;
-  }, [cleanupConnection]);
-
-  /**
-   * Subscribes to additional correlation IDs
+   * Subscribes to correlation IDs for status updates with production-ready reliability
    */
   const subscribeToCorrelationIds = useCallback(async (correlationIds: string[]) => {
-    console.log('[useWebSocket] Starting subscription:', {
-      correlationIds,
-      isConnected,
-      clientId
-    });
+    console.log('🔵 [WS-SUBSCRIBE] Subscribing to correlation IDs:', correlationIds);
 
-    // If not connected, try to connect first
-    if (!isConnected && !isConnecting) {
-      console.log('[useWebSocket] Not connected, attempting to connect first...');
-      try {
-        await connect();
-        console.log('[useWebSocket] Connection established, waiting for clientId...');
-      } catch (error) {
-        console.error('[useWebSocket] Failed to establish connection:', error);
-        throw new Error('Failed to establish WebSocket connection');
-      }
-    }
+    // Add to correlation ID tracking
+    correlationIds.forEach(id => correlationIdSubscriptionsRef.current.add(id));
 
-    // Wait for both connection and clientId to be ready
     if (!isConnected || !clientId) {
-      console.log('[useWebSocket] Waiting for connection to be ready:', {
-        isConnected,
-        clientId: !!clientId
-      });
-      
-      // Add to pending subscriptions and return
+      console.log('🔵 [WS-SUBSCRIBE] Not connected or no client ID, adding to pending subscriptions');
       correlationIds.forEach(id => pendingSubscriptionsRef.current.add(id));
-      console.log('[useWebSocket] Added to pending subscriptions:', {
-        pendingCount: pendingSubscriptionsRef.current.size,
-        correlationIds
-      });
       return;
     }
 
+    const subscriptionMessage = {
+      type: 'subscribe',
+      data: { correlationIds },
+      timestamp: new Date().toISOString(),
+      maxRetries: 3
+    };
+
     try {
-      // Send subscription message
-      const message = {
-        type: 'subscribe',
-        data: { clientId, correlationIds }
-      };
-
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify(message));
-        setConnectionStats(prev => ({ ...prev, messagesSent: prev.messagesSent + 1 }));
-        console.log('[useWebSocket] Subscription sent:', message);
-      } else {
-        // Queue message for later
-        messageQueueRef.current.push({
-          id: `sub_${Date.now()}`,
-          type: 'subscribe',
-          data: { clientId, correlationIds },
-          timestamp: Date.now(),
-          retryCount: 0,
-          maxRetries: 3
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        const messageString = JSON.stringify({
+          type: subscriptionMessage.type,
+          data: subscriptionMessage.data,
+          timestamp: subscriptionMessage.timestamp
         });
-        console.log('[useWebSocket] Subscription queued:', message);
+        console.log('🔐 [WS-SUBSCRIBE] Sending subscription message:', messageString);
+        socketRef.current.send(messageString);
+        setConnectionStats(prev => ({ ...prev, messagesSent: prev.messagesSent + 1 }));
+        
+        console.log('🟢 [WS-SUBSCRIBE] Subscription sent for correlation IDs:', correlationIds);
+      } else {
+        console.warn('🔴 [WS-SUBSCRIBE] WebSocket not ready, queuing subscription');
+        queueMessage(subscriptionMessage);
+        correlationIds.forEach(id => pendingSubscriptionsRef.current.add(id));
       }
-    } catch (error: any) {
-      console.error('[useWebSocket] Subscription failed:', error);
-      setConnectionError(error.message);
+    } catch (error) {
+      console.error('🔴 [WS-SUBSCRIBE] Failed to subscribe:', error);
+      queueMessage(subscriptionMessage);
+      correlationIds.forEach(id => pendingSubscriptionsRef.current.add(id));
     }
-  }, [clientId, isConnected, isConnecting, connect]);
+  }, [isConnected, clientId, queueMessage]);
 
-  /**
-   * Gets status for a specific correlation ID
-   */
-  const getStatus = useCallback((correlationId: string): WebSocketStatusUpdate | null => {
-    return statusUpdates.get(correlationId) || null;
-  }, [statusUpdates]);
-
-  /**
-   * Checks if status is complete (COMPLETED or FAILED)
-   */
-  const isStatusComplete = useCallback((correlationId: string): boolean => {
-    const status = getStatus(correlationId);
-    return status?.status === 'COMPLETED' || status?.status === 'FAILED';
-  }, [getStatus]);
-
-  /**
-   * Checks if status is failed
-   */
-  const isStatusFailed = useCallback((correlationId: string): boolean => {
-    const status = getStatus(correlationId);
-    return status?.status === 'FAILED';
-  }, [getStatus]);
-
-  /**
-   * Gets all active operations (PENDING or IN_PROGRESS status)
-   */
-  const getActiveOperations = useCallback((): string[] => {
-    const active: string[] = [];
-    for (const [correlationId, status] of statusUpdates.entries()) {
-      if (status.status === 'PENDING' || status.status === 'IN_PROGRESS') {
-        active.push(correlationId);
-      }
+  // Auto-subscribe to pending correlation IDs when connection is ready
+  useEffect(() => {
+    if (isConnected && clientId && pendingSubscriptionsRef.current.size > 0) {
+      const pendingIds = Array.from(pendingSubscriptionsRef.current);
+      pendingSubscriptionsRef.current.clear();
+      
+      console.log('🔵 [WS-AUTO-SUBSCRIBE] Auto-subscribing to pending correlation IDs:', pendingIds);
+      subscribeToCorrelationIds(pendingIds);
     }
-    return active;
-  }, [statusUpdates]);
+  }, [isConnected, clientId, subscribeToCorrelationIds]);
 
-  /**
-   * Gets all completed operations (COMPLETED status)
-   */
-  const getCompletedOperations = useCallback((): string[] => {
-    const completed: string[] = [];
-    for (const [correlationId, status] of statusUpdates.entries()) {
-      if (status.status === 'COMPLETED') {
-        completed.push(correlationId);
-      }
+  // Auto-connect when user is available
+  useEffect(() => {
+    if (isInitialized && user?.id && !hasAttemptedInitialConnectionRef.current) {
+      console.log('🔵 [WS-AUTO-CONNECT] Auto-connecting with user ID:', user.id);
+      connect();
     }
-    return completed;
-  }, [statusUpdates]);
+  }, [isInitialized, user?.id, connect]);
 
-  /**
-   * Gets all failed operations (FAILED status)
-   */
-  const getFailedOperations = useCallback((): string[] => {
-    const failed: string[] = [];
-    for (const [correlationId, status] of statusUpdates.entries()) {
-      if (status.status === 'FAILED') {
-        failed.push(correlationId);
-      }
+  // Connection health monitoring
+  useEffect(() => {
+    if (isConnected) {
+      const healthCheckInterval = setInterval(() => {
+        validateConnection();
+      }, 10000); // Check every 10 seconds
+
+      return () => clearInterval(healthCheckInterval);
     }
-    return failed;
-  }, [statusUpdates]);
-
-  /**
-   * Gets all pending operations (no status yet)
-   */
-  const getPendingOperations = useCallback((): string[] => {
-    const pending: string[] = [];
-    for (const [correlationId, status] of statusUpdates.entries()) {
-      if (!status || !status.status) {
-        pending.push(correlationId);
-      }
-    }
-    return pending;
-  }, [statusUpdates]);
-
-  /**
-   * Clears completed operations from status updates
-   */
-  const clearCompletedOperations = useCallback((): void => {
-    setStatusUpdates(prev => {
-      const newMap = new Map(prev);
-      for (const [correlationId, status] of newMap.entries()) {
-        if (status.status === 'COMPLETED' || status.status === 'FAILED') {
-          newMap.delete(correlationId);
-        }
-      }
-      return newMap;
-    });
-  }, []);
+  }, [isConnected, validateConnection]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -689,42 +832,70 @@ export function useWebSocket(): UseWebSocketReturn {
     };
   }, [disconnect]);
 
-  // Auto-connect when user is authenticated
-  useEffect(() => {
-    if (user?.id && isInitialized && !isConnected && !isConnecting) {
-      console.log('[useWebSocket] Auto-connecting...');
-      connect();
-    }
-  }, [user?.id, isInitialized, isConnected, isConnecting, connect]);
+  // Status helper functions
+  const getStatus = useCallback((correlationId: string) => {
+    return statusUpdates.get(correlationId) || null;
+  }, [statusUpdates]);
+
+  const isStatusComplete = useCallback((correlationId: string) => {
+    const status = getStatus(correlationId);
+    return status?.status === 'COMPLETED' || status?.status === 'FAILED';
+  }, [getStatus]);
+
+  const isStatusFailed = useCallback((correlationId: string) => {
+    const status = getStatus(correlationId);
+    return status?.status === 'FAILED';
+  }, [getStatus]);
+
+  const getActiveOperations = useCallback(() => {
+    return Array.from(statusUpdates.entries())
+      .filter(([_, status]) => status.status === 'PENDING')
+      .map(([correlationId, _]) => correlationId);
+  }, [statusUpdates]);
+
+  const getCompletedOperations = useCallback(() => {
+    return Array.from(statusUpdates.entries())
+      .filter(([_, status]) => status.status === 'COMPLETED')
+      .map(([correlationId, _]) => correlationId);
+  }, [statusUpdates]);
+
+  const getFailedOperations = useCallback(() => {
+    return Array.from(statusUpdates.entries())
+      .filter(([_, status]) => status.status === 'FAILED')
+      .map(([correlationId, _]) => correlationId);
+  }, [statusUpdates]);
+
+  const getPendingOperations = useCallback(() => {
+    return Array.from(pendingSubscriptionsRef.current);
+  }, []);
+
+  const clearCompletedOperations = useCallback(() => {
+    setStatusUpdates(prev => {
+      const newMap = new Map(prev);
+      Array.from(newMap.entries())
+        .filter(([_, status]) => status.status === 'COMPLETED' || status.status === 'FAILED')
+        .forEach(([correlationId, _]) => newMap.delete(correlationId));
+      return newMap;
+    });
+  }, []);
 
   return {
-    // Connection state
     isConnected,
     isConnecting,
     connectionError,
     connectionHealth,
-    
-    // Status updates
     statusUpdates,
-    
-    // Connection management
     connect,
     disconnect,
     subscribeToCorrelationIds,
-    
-    // Status helpers
     getStatus,
     isStatusComplete,
     isStatusFailed,
-    
-    // Multiple app queue helpers
     getActiveOperations,
     getCompletedOperations,
     getFailedOperations,
     getPendingOperations,
     clearCompletedOperations,
-    
-    // Connection info
     clientId,
     connectionStats
   };

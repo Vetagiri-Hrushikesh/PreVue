@@ -121,6 +121,7 @@ export interface AppsContextType extends Omit<AppsState, 'showPendingOperationsD
   emptyTrash: () => Promise<void>;
   startBuild: (appId: string, buildConfig: any) => Promise<void>;
   buildAAB: (appId: string, options?: any) => Promise<string | null>;
+  buildBundle: (appId: string, options?: any) => Promise<string | null>;
   buildDebug: (appId: string, options?: any) => Promise<string | null>;
   buildRelease: (appId: string, options?: any) => Promise<string | null>;
   downloadBuild: (appId: string, platform: string, buildId: string) => Promise<void>;

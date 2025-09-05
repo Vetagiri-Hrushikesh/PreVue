@@ -10,32 +10,68 @@ const PreviewView = requireNativeComponent<any>('PreviewView');
 type Props = NativeStackScreenProps<RootStackParamList, 'Preview'>;
 
 /**
- * PreviewScreen - Simple preview of embedded React Native apps
+ * PreviewScreen - Preview of embedded React Native apps with dynamic bundle loading
  */
 const PreviewScreen: React.FC<Props> = ({ navigation, route }) => {
-  const { appId } = route.params;
+  const { appId, appName, bundleUrl } = route.params;
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [loadingMessage, setLoadingMessage] = useState('Preparing preview...');
 
   useEffect(() => {
     setIsLoading(true);
     setHasError(false);
+    setDownloadProgress(0);
     
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 1500);
+    console.log(`🔍 [PreviewScreen] Received parameters:`, {
+      appId,
+      appName,
+      bundleUrl
+    });
+    
+    if (bundleUrl) {
+      setLoadingMessage('Downloading app bundle...');
+      console.log(`📥 [PreviewScreen] Starting download from: ${bundleUrl}`);
+      // The native component will handle the download and extraction
+      // We'll show progress updates from the native side
+    } else {
+      setLoadingMessage('Loading preview...');
+      console.log(`⚠️ [PreviewScreen] No bundle URL provided, using fallback`);
+      // Fallback to static bundle
+      const timer = setTimeout(() => {
+        setIsLoading(false);
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [appId, bundleUrl]);
 
-    return () => clearTimeout(timer);
-  }, [appId]);
-
-  const handlePreviewError = () => {
+  const handlePreviewError = (event: any) => {
+    const message = event.nativeEvent?.message || event.message || 'Unknown error';
+    console.log(`❌ [PreviewScreen] Preview error: ${message}`);
     setHasError(true);
     setIsLoading(false);
+  };
+
+  const handleDownloadProgress = (event: any) => {
+    const progress = event.nativeEvent?.progress || event.progress || event;
+    console.log(`📊 [PreviewScreen] Download progress: ${progress}%`);
+    setDownloadProgress(progress);
+    if (progress >= 100) {
+      setLoadingMessage('Extracting and preparing app...');
+    }
+  };
+
+  const handlePreviewReady = (event: any) => {
+    console.log(`✅ [PreviewScreen] Preview ready!`);
+    setIsLoading(false);
+    setDownloadProgress(100);
   };
 
   const retryPreview = () => {
     setIsLoading(true);
     setHasError(false);
+    setDownloadProgress(0);
   };
 
   return (
@@ -45,7 +81,7 @@ const PreviewScreen: React.FC<Props> = ({ navigation, route }) => {
         <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
           <Text style={styles.backText}>‹ Back</Text>
         </Pressable>
-        <Text style={styles.title}>Preview: {appId}</Text>
+        <Text style={styles.title}>Preview: {appName || appId}</Text>
         <View style={styles.placeholder} />
       </View>
       
@@ -54,8 +90,20 @@ const PreviewScreen: React.FC<Props> = ({ navigation, route }) => {
         {isLoading && (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={Colors.primary} />
-            <Text style={styles.loadingText}>Loading preview...</Text>
-            <Text style={styles.loadingSubtext}>Please wait while we prepare your app</Text>
+            <Text style={styles.loadingText}>{loadingMessage}</Text>
+            {bundleUrl && downloadProgress > 0 && (
+              <>
+                <Text style={styles.loadingSubtext}>
+                  {downloadProgress < 100 ? `Downloading... ${downloadProgress}%` : 'Extracting bundle...'}
+                </Text>
+                <View style={styles.progressBarContainer}>
+                  <View style={[styles.progressBar, { width: `${downloadProgress}%` }]} />
+                </View>
+              </>
+            )}
+            {!bundleUrl && (
+              <Text style={styles.loadingSubtext}>Please wait while we prepare your app</Text>
+            )}
           </View>
         )}
         
@@ -69,14 +117,17 @@ const PreviewScreen: React.FC<Props> = ({ navigation, route }) => {
           </View>
         )}
         
-        {/* Simple PreviewView */}
+        {/* Dynamic PreviewView */}
         <PreviewView 
-          componentName={appId} 
+          componentName={appName || appId}
+          bundleUrl={bundleUrl}
           style={[
             styles.previewView, 
             (isLoading || hasError) && styles.previewViewHidden
           ]}
           onError={handlePreviewError}
+          onDownloadProgress={handleDownloadProgress}
+          onPreviewReady={handlePreviewReady}
         />
       </View>
     </View>
@@ -176,6 +227,19 @@ const styles = StyleSheet.create({
   },
   nativePreviewView: { // Added style for the native PreviewView
     flex: 1,
+  },
+  progressBarContainer: {
+    width: '80%',
+    height: 4,
+    backgroundColor: Colors.gray[200],
+    borderRadius: 2,
+    marginTop: 16,
+    overflow: 'hidden',
+  },
+  progressBar: {
+    height: '100%',
+    backgroundColor: Colors.primary,
+    borderRadius: 2,
   },
 });
 

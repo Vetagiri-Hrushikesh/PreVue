@@ -1,7 +1,7 @@
 export type RootStackParamList = {
   Login: undefined;
   MainTabs: undefined;
-  Preview: { appId: string };
+  Preview: { appId: string; appName: string; bundleUrl?: string };
 };
 
 export type MainTabParamList = {

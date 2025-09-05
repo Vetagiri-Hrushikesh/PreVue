@@ -18,26 +18,282 @@ import com.facebook.react.uimanager.ThemedReactContext
 import com.facebook.react.uimanager.annotations.ReactProp
 import android.graphics.Rect
 import com.facebook.react.ReactPackage
+import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.WritableMap
+import com.facebook.react.uimanager.events.RCTEventEmitter
+import com.facebook.react.common.MapBuilder
+import java.io.*
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.zip.ZipInputStream
+import java.util.concurrent.Executors
+import java.util.concurrent.ExecutorService
 
 class PreviewViewManager : SimpleViewManager<ReactRootView>() {
     companion object {
         const val REACT_CLASS = "PreviewView"
         private const val TAG = "PreviewViewManager"
-        private const val DEFAULT_COMPONENT_NAME = "AwesomeProject"
-        private const val DEFAULT_BUNDLE_PATH = "assets://awesome/complete-app.bundle"
-        private const val PREVUE_COMPONENT_NAME = "PreVue"
-        private const val PREVUE_BUNDLE_PATH = "assets://index.android.bundle"
         private const val MAX_RETRY_ATTEMPTS = 3
+        private const val CACHE_DIR_NAME = "preview_cache"
     }
 
-    // Separate instance managers for each component
+    // Dynamic instance managers for each component
     private val instanceManagers = mutableMapOf<String, ReactInstanceManager>()
     private val startedViews = mutableSetOf<ReactRootView>()
     private val initializationStates = mutableMapOf<String, Boolean>()
     private val retryAttempts = mutableMapOf<String, Int>()
-    private var currentComponentName: String = DEFAULT_COMPONENT_NAME
+    private var currentComponentName: String = ""
+    private var currentBundleUrl: String? = null
+    private val executor: ExecutorService = Executors.newSingleThreadExecutor()
 
     override fun getName(): String = REACT_CLASS
+
+    override fun getExportedCustomDirectEventTypeConstants(): Map<String, Any> {
+        return MapBuilder.of(
+            "onDownloadProgress", MapBuilder.of("registrationName", "onDownloadProgress"),
+            "onPreviewReady", MapBuilder.of("registrationName", "onPreviewReady"),
+            "onError", MapBuilder.of("registrationName", "onError")
+        )
+    }
+
+    private fun getCacheDir(context: Context): File {
+        val cacheDir = File(context.cacheDir, CACHE_DIR_NAME)
+        if (!cacheDir.exists()) {
+            cacheDir.mkdirs()
+        }
+        return cacheDir
+    }
+
+    private fun clearCache(context: Context) {
+        try {
+            val cacheDir = getCacheDir(context)
+            if (cacheDir.exists()) {
+                cacheDir.deleteRecursively()
+                cacheDir.mkdirs()
+                Log.d(TAG, "Cache cleared successfully")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error clearing cache", e)
+        }
+    }
+
+    private fun downloadAndExtractBundle(context: Context, bundleUrl: String, componentName: String, rootView: ReactRootView) {
+        executor.execute {
+            try {
+                Log.d(TAG, "Starting download from: $bundleUrl")
+                
+                // Clear existing cache
+                clearCache(context)
+                
+                val url = URL(bundleUrl)
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 30000 // 30 seconds timeout
+                connection.readTimeout = 60000 // 60 seconds timeout
+                connection.connect()
+                
+                val responseCode = connection.responseCode
+                Log.d(TAG, "HTTP Response Code: $responseCode")
+                
+                if (responseCode != HttpURLConnection.HTTP_OK) {
+                    throw Exception("HTTP Error: $responseCode - ${connection.responseMessage}")
+                }
+                
+                val contentLength = connection.contentLength
+                Log.d(TAG, "Content Length: $contentLength bytes")
+                
+                if (contentLength <= 0) {
+                    Log.w(TAG, "Content length is unknown or zero")
+                }
+                
+                val inputStream = connection.inputStream
+                
+                val cacheDir = getCacheDir(context)
+                val zipFile = File(cacheDir, "$componentName-bundle.zip")
+                val outputStream = FileOutputStream(zipFile)
+                
+                val buffer = ByteArray(8192)
+                var totalBytesRead = 0
+                var bytesRead: Int
+                var lastProgressUpdate = 0
+                var lastProgressTime = 0L
+                
+                Log.d(TAG, "Starting download loop...")
+                
+                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                    outputStream.write(buffer, 0, bytesRead)
+                    totalBytesRead += bytesRead
+                    
+                    // Log every 1MB or every 5 seconds
+                    val currentTime = System.currentTimeMillis()
+                    if (contentLength > 0) {
+                        val progress = (totalBytesRead * 100 / contentLength)
+                        
+                        if (progress != lastProgressUpdate || (currentTime - lastProgressTime) > 5000) {
+                            Log.d(TAG, "Download progress: $progress% ($totalBytesRead/$contentLength bytes)")
+                            lastProgressUpdate = progress
+                            lastProgressTime = currentTime
+                            
+                            // Send progress update to React Native
+                            rootView.post {
+                                sendDownloadProgressEvent(rootView, progress)
+                            }
+                        }
+                    } else {
+                        // If content length is unknown, log every 1MB
+                        if (totalBytesRead % (1024 * 1024) == 0) {
+                            Log.d(TAG, "Downloaded: ${totalBytesRead / (1024 * 1024)}MB")
+                        }
+                    }
+                }
+                
+                Log.d(TAG, "Download completed. Total bytes: $totalBytesRead")
+                
+                // Send final progress update
+                rootView.post {
+                    sendDownloadProgressEvent(rootView, 100)
+                }
+                
+                inputStream.close()
+                outputStream.close()
+                connection.disconnect()
+                
+                Log.d(TAG, "Download completed, extracting...")
+                
+                // Extract the zip file
+                extractBundle(zipFile, cacheDir, componentName)
+                
+                // Start the React app with the extracted bundle
+                rootView.post {
+                    startReactAppWithExtractedBundle(context, componentName, rootView)
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Error downloading/extracting bundle", e)
+                Log.e(TAG, "Bundle URL: $bundleUrl")
+                Log.e(TAG, "Component Name: $componentName")
+                rootView.post {
+                    sendErrorEvent(rootView, "Failed to download or extract bundle: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun extractBundle(zipFile: File, cacheDir: File, componentName: String) {
+        try {
+            val zipInputStream = ZipInputStream(FileInputStream(zipFile))
+            var entry = zipInputStream.nextEntry
+            
+            while (entry != null) {
+                val entryName = entry.name
+                val outputFile = File(cacheDir, entryName)
+                
+                if (entry.isDirectory) {
+                    outputFile.mkdirs()
+                } else {
+                    outputFile.parentFile?.mkdirs()
+                    val outputStream = FileOutputStream(outputFile)
+                    
+                    val buffer = ByteArray(8192)
+                    var bytesRead: Int
+                    while (zipInputStream.read(buffer).also { bytesRead = it } != -1) {
+                        outputStream.write(buffer, 0, bytesRead)
+                    }
+                    
+                    outputStream.close()
+                    Log.d(TAG, "Extracted: $entryName")
+                }
+                
+                zipInputStream.closeEntry()
+                entry = zipInputStream.nextEntry
+            }
+            
+            zipInputStream.close()
+            zipFile.delete() // Clean up zip file
+            Log.d(TAG, "Bundle extraction completed")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error extracting bundle", e)
+            throw e
+        }
+    }
+
+    private fun startReactAppWithExtractedBundle(context: Context, componentName: String, rootView: ReactRootView) {
+        try {
+            val application = context.applicationContext as Application
+            val cacheDir = getCacheDir(context)
+            val bundleFile = File(cacheDir, "$componentName/complete-app.bundle")
+            
+            if (!bundleFile.exists()) {
+                Log.e(TAG, "Bundle file not found: ${bundleFile.absolutePath}")
+                sendErrorEvent(rootView, "Bundle file not found after extraction")
+                return
+            }
+            
+            val bundlePath = "file://${bundleFile.absolutePath}"
+            Log.d(TAG, "Starting React app with bundle: $bundlePath")
+            
+            val instanceManager = getOrCreateInstanceManager(application, componentName, bundlePath)
+            
+            // Ensure Activity context is set for the instance manager
+            val currentActivity = rootView.context as? Activity
+            if (currentActivity != null) {
+                try {
+                    instanceManager.onHostResume(currentActivity)
+                    Log.d(TAG, "Set Activity context for $componentName")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not set Activity context", e)
+                }
+            }
+            
+            if (instanceManager.currentReactContext != null && initializationStates[componentName] == true) {
+                Log.d(TAG, "ReactContext ready, starting app immediately: $componentName")
+                startReactApplication(rootView, instanceManager)
+                sendPreviewReadyEvent(rootView)
+            } else {
+                Log.d(TAG, "ReactContext not ready, setting up listener for: $componentName")
+                setupReactContextListener(rootView, instanceManager, componentName)
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting React app with extracted bundle", e)
+            sendErrorEvent(rootView, "Failed to start app: ${e.message}")
+        }
+    }
+
+    private fun sendDownloadProgressEvent(rootView: ReactRootView, progress: Int) {
+        try {
+            val reactContext = rootView.context as? ReactContext
+            reactContext?.getJSModule(RCTEventEmitter::class.java)
+                ?.receiveEvent(rootView.id, "onDownloadProgress", Arguments.createMap().apply {
+                    putInt("progress", progress)
+                })
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending download progress event", e)
+        }
+    }
+
+    private fun sendPreviewReadyEvent(rootView: ReactRootView) {
+        try {
+            val reactContext = rootView.context as? ReactContext
+            reactContext?.getJSModule(RCTEventEmitter::class.java)
+                ?.receiveEvent(rootView.id, "onPreviewReady", Arguments.createMap())
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending preview ready event", e)
+        }
+    }
+
+    private fun sendErrorEvent(rootView: ReactRootView, message: String) {
+        try {
+            val reactContext = rootView.context as? ReactContext
+            reactContext?.getJSModule(RCTEventEmitter::class.java)
+                ?.receiveEvent(rootView.id, "onError", Arguments.createMap().apply {
+                    putString("message", message)
+                })
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending error event", e)
+        }
+    }
 
     private fun createPreviewHost(application: Application, bundlePath: String): ReactNativeHost {
         return object : DefaultReactNativeHost(application) {
@@ -45,7 +301,7 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
             override fun getJSBundleFile(): String? = bundlePath
             override fun getPackages(): List<ReactPackage> {
                 val packages = PackageList(this).packages.toMutableList()
-                // Add our bridge package to provide native functionality
+                // Add our bridge package to provide native functionality for embedded apps
                 packages.add(EmbeddedAppBridgePackage())
                 return packages
             }
@@ -55,75 +311,26 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
         }
     }
 
-    private fun getOrCreateInstanceManager(application: Application, componentName: String): ReactInstanceManager {
+    private fun getOrCreateInstanceManager(application: Application, componentName: String, bundlePath: String): ReactInstanceManager {
         return instanceManagers.getOrPut(componentName) {
-            val bundlePath = if (componentName == PREVUE_COMPONENT_NAME) {
-                PREVUE_BUNDLE_PATH
-            } else {
-                DEFAULT_BUNDLE_PATH
-            }
-            
             Log.d(TAG, "Creating new instance manager for $componentName with bundle: $bundlePath")
             val previewHost = createPreviewHost(application, bundlePath)
             previewHost.reactInstanceManager
         }
     }
 
-    private fun preloadInstanceManager(application: Application, componentName: String) {
-        if (initializationStates[componentName] == true) {
-            return // Already initialized
-        }
-
-        val instanceManager = getOrCreateInstanceManager(application, componentName)
-        if (instanceManager.currentReactContext != null) {
-            initializationStates[componentName] = true
-            return
-        }
-
-        Log.d(TAG, "Preloading instance manager for $componentName")
-        initializationStates[componentName] = false
-        
-        instanceManager.addReactInstanceEventListener(object : ReactInstanceEventListener {
-            override fun onReactContextInitialized(context: ReactContext) {
-                Log.d(TAG, "Preloaded ReactContext initialized for: $componentName")
-                initializationStates[componentName] = true
-                retryAttempts[componentName] = 0 // Reset retry attempts on success
-            }
-        })
-        
-        instanceManager.createReactContextInBackground()
-    }
-
     override fun createViewInstance(reactContext: ThemedReactContext): ReactRootView {
         Log.d(TAG, "createViewInstance called for component: $currentComponentName")
 
-        val application: Application = reactContext.currentActivity?.application
-            ?: (reactContext.applicationContext as Application)
-
-        // Preload the current component's instance manager
-        preloadInstanceManager(application, currentComponentName)
-
-        val instanceManager = getOrCreateInstanceManager(application, currentComponentName)
         val rootView = ReactRootView(reactContext)
 
-        // Ensure proper Activity context for native components
-        val currentActivity = reactContext.currentActivity
-        if (currentActivity != null) {
-            // Set the Activity context for the instance manager to enable native components
-            try {
-                instanceManager.onHostResume(currentActivity)
-                Log.d(TAG, "Set Activity context for $currentComponentName")
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not set Activity context", e)
-            }
-        }
-
-        if (instanceManager.currentReactContext != null && initializationStates[currentComponentName] == true) {
-            Log.d(TAG, "ReactContext ready, starting app immediately: $currentComponentName")
-            startReactApplication(rootView, instanceManager)
+        // If we have a bundle URL, start the download process
+        if (currentBundleUrl != null) {
+            Log.d(TAG, "Bundle URL provided, starting download: $currentBundleUrl")
+            downloadAndExtractBundle(reactContext, currentBundleUrl!!, currentComponentName, rootView)
         } else {
-            Log.d(TAG, "ReactContext not ready, setting up listener for: $currentComponentName")
-            setupReactContextListener(rootView, instanceManager, currentComponentName)
+            Log.w(TAG, "No bundle URL provided, PreviewView will remain empty")
+            // Could show a placeholder or error message here
         }
 
         return rootView
@@ -154,6 +361,7 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
                 
                 if (!startedViews.contains(rootView)) {
                     startReactApplication(rootView, instanceManager)
+                    sendPreviewReadyEvent(rootView)
                 }
             }
         })
@@ -231,39 +439,38 @@ class PreviewViewManager : SimpleViewManager<ReactRootView>() {
 
     @ReactProp(name = "componentName")
     fun setComponentName(view: ReactRootView, name: String?) {
-        val newComponent = name ?: DEFAULT_COMPONENT_NAME
+        val newComponent = name ?: ""
         if (newComponent == currentComponentName) {
             Log.d(TAG, "componentName unchanged: $newComponent")
             return
         }
 
-        Log.d(TAG, "setComponentName called. Switching from $currentComponentName to $newComponent")
+        Log.d(TAG, "setComponentName called. Switching from '$currentComponentName' to '$newComponent'")
         currentComponentName = newComponent
 
-        val application: Application = (view.context.applicationContext as Application)
-        
-        // Preload the new component's instance manager
-        preloadInstanceManager(application, newComponent)
-        
-        val instanceManager = getOrCreateInstanceManager(application, newComponent)
-        
-        // Ensure Activity context is set for the new component
-        val currentActivity = view.context as? Activity
-        if (currentActivity != null) {
-            try {
-                instanceManager.onHostResume(currentActivity)
-                Log.d(TAG, "Set Activity context for new component: $newComponent")
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not set Activity context for new component", e)
-            }
-        }
-        
-        if (instanceManager.currentReactContext != null && initializationStates[newComponent] == true) {
-            Log.d(TAG, "New component's ReactContext ready, starting immediately")
-            startReactApplication(view, instanceManager)
+        // If we have a bundle URL, start the download process now that we have the component name
+        if (currentBundleUrl != null && newComponent.isNotEmpty()) {
+            Log.d(TAG, "Bundle URL present, starting download process for component: $newComponent")
+            downloadAndExtractBundle(view.context, currentBundleUrl!!, newComponent, view)
+        } else if (currentBundleUrl != null && newComponent.isEmpty()) {
+            Log.w(TAG, "Bundle URL present but component name is empty")
         } else {
-            Log.d(TAG, "New component's ReactContext not ready, setting up listener")
-            setupReactContextListener(view, instanceManager, newComponent)
+            Log.d(TAG, "No bundle URL present, component name updated but no action taken")
+        }
+    }
+
+    @ReactProp(name = "bundleUrl")
+    fun setBundleUrl(view: ReactRootView, bundleUrl: String?) {
+        Log.d(TAG, "setBundleUrl called with: $bundleUrl")
+        currentBundleUrl = bundleUrl
+        
+        if (bundleUrl != null && currentComponentName.isNotEmpty()) {
+            Log.d(TAG, "Starting download process for bundle URL: $bundleUrl with component: $currentComponentName")
+            downloadAndExtractBundle(view.context, bundleUrl, currentComponentName, view)
+        } else if (bundleUrl != null && currentComponentName.isEmpty()) {
+            Log.w(TAG, "Bundle URL provided but component name is empty, waiting for component name")
+        } else {
+            Log.d(TAG, "Bundle URL cleared")
         }
     }
 }

@@ -706,6 +706,40 @@ export const AppsProvider = ({ children }: { children: React.ReactElement }) => 
     }
   };
 
+  const buildBundle = async (appId: string, options: any = {}) => {
+    try {
+      console.log('[apps-context] Starting bundle build for app:', appId);
+      
+      const response = await appsAPI.buildBundle(appId, options);
+      
+      console.log('[apps-context] Bundle build response:', response);
+
+      if (response.data?.correlationId) {
+        console.log('[apps-context] Received correlation ID for bundle build:', response.data.correlationId);
+        
+        // Subscribe to SSE updates for this build
+        currentCorrelationIds.current.add(response.data.correlationId);
+        
+        // Add to pending operations
+        addPendingOperation(response.data.correlationId, {
+          type: 'buildBundle',
+          appId,
+          startedAt: new Date().toISOString(),
+          status: 'IN_PROGRESS'
+        });
+        
+        return response.data.correlationId;
+      }
+      
+      return response.data;
+    } catch (err: any) {
+      console.error('[apps-context] Error starting bundle build:', err);
+      
+      const errorMessage = err.response?.data?.message || 'Failed to start bundle build';
+      throw err;
+    }
+  };
+
   const buildDebug = async (appId: string, options: any = {}) => {
     try {
       console.log('[apps-context] Starting debug build for app:', appId);
@@ -836,6 +870,7 @@ export const AppsProvider = ({ children }: { children: React.ReactElement }) => 
     const pendingOperations = Object.values(state.pendingOperations);
     return pendingOperations.some(operation => 
       operation.type === 'buildAAB' || 
+      operation.type === 'buildBundle' ||
       operation.type === 'buildDebug' || 
       operation.type === 'buildRelease'
     );
@@ -945,6 +980,7 @@ export const AppsProvider = ({ children }: { children: React.ReactElement }) => 
         emptyTrash,
         startBuild,
         buildAAB,
+        buildBundle,
         buildDebug,
         buildRelease,
         downloadBuild,

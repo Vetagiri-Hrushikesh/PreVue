@@ -358,6 +358,33 @@ export class FemuxerAPI {
     return response;
   }
 
+  async buildBundle(appId: string, options: any = {}): Promise<FemuxerResponse<any>> {
+    console.log('📦 [DEVPORTAL-FemuxerAPI] Starting bundle build for app:', appId);
+    
+    const response = await this.makeRequest('POST', 'ui.app.bundle.request', {
+      appId,
+      options: {
+        verbose: true,
+        force: false,
+        clean: true,
+        bundle: {
+          split: true,
+          universal: false,
+          optimize: true
+        },
+        ...options
+      }
+    }, {
+      correlationId: `build-bundle-${appId}-${generateUUID()}`,
+      timestamp: new Date().toISOString(),
+      source: 'client',
+      version: '1.0.0'
+    });
+    
+    console.log('📥 [DEVPORTAL-FemuxerAPI] Bundle build response:', response);
+    return response;
+  }
+
   async getBuildStatus(appId: string, buildId: string): Promise<FemuxerResponse<any>> {
     return this.makeRequest('POST', 'ui.app.build.status.request', { appId, buildId });
   }
@@ -415,6 +442,7 @@ export const appsAPI = {
   buildAAB: (appId: string, options: any) => femuxerAPI.buildAAB(appId, options),
   buildDebug: (appId: string, options: any) => femuxerAPI.buildDebug(appId, options),
   buildRelease: (appId: string, options: any) => femuxerAPI.buildRelease(appId, options),
+  buildBundle: (appId: string, options: any) => femuxerAPI.buildBundle(appId, options),
   getBuildStatus: (appId: string, buildId: string) => femuxerAPI.getBuildStatus(appId, buildId),
   downloadBuild: (appId: string, platform: string, buildId: string) => femuxerAPI.downloadBuild(appId, platform, buildId)
 };
