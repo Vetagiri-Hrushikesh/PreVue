@@ -16,6 +16,7 @@ import {
   Eye,
   EyeSlash,
 } from 'iconsax-react-nativejs';
+import Icon from 'react-native-vector-icons/FontAwesome';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
 import { Colors } from '../constants/colors';
@@ -25,8 +26,8 @@ import GuestGuard from '../components/GuestGuard';
 type Props = NativeStackScreenProps<RootStackParamList, 'Login'>;
 
 const LoginScreen: React.FC<Props> = ({ navigation }) => {
-  const [email, setEmail] = useState('user@maigha.com');
-  const [password, setPassword] = useState('User@123');
+  const [email, setEmail] = useState('owner@maigha.com');
+  const [password, setPassword] = useState('Owner@123');
   const [showPassword, setShowPassword] = useState(false);
   const [keepSignedIn, setKeepSignedIn] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -91,10 +92,10 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
 
             <Pressable
               style={styles.socialButton}
-              onPress={() => handleSocialLogin('Twitter')}
+              onPress={() => handleSocialLogin('GitHub')}
             >
-              <Text style={[styles.socialButtonText, { color: Colors.twitter, marginLeft: 0 }]}>𝕏</Text>
-              <Text style={styles.socialButtonText}>Sign In With Twitter</Text>
+              <Icon name="github" size={20} color={Colors.github} />
+              <Text style={styles.socialButtonText}>Sign In With GitHub</Text>
             </Pressable>
 
             <Pressable
@@ -116,9 +117,6 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
           {/* Login Form Header */}
           <View style={styles.formHeader}>
             <Text style={styles.loginTitle}>Login</Text>
-            <Pressable onPress={() => Alert.alert('Sign Up', 'Sign up functionality would be implemented here')}>
-              <Text style={styles.signUpLink}>Don't have an account?</Text>
-            </Pressable>
           </View>
 
           {/* Email Input */}
@@ -169,9 +167,6 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
                 {keepSignedIn && <Text style={styles.checkmark}>✓</Text>}
               </View>
               <Text style={styles.checkboxText}>Keep me sign in</Text>
-            </Pressable>
-            <Pressable onPress={() => Alert.alert('Forgot Password', 'Password reset functionality would be implemented here')}>
-              <Text style={styles.forgotPassword}>Forgot Password?</Text>
             </Pressable>
           </View>
 
@@ -285,11 +280,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: Colors.textPrimary,
   },
-  signUpLink: {
-    fontSize: 14,
-    color: Colors.primary,
-    fontWeight: '500',
-  },
   inputContainer: {
     marginBottom: 16,
   },
@@ -358,11 +348,6 @@ const styles = StyleSheet.create({
   checkboxText: {
     fontSize: 14,
     color: Colors.textSecondary,
-  },
-  forgotPassword: {
-    fontSize: 14,
-    color: Colors.primary,
-    fontWeight: '500',
   },
   loginButton: {
     backgroundColor: Colors.primary,

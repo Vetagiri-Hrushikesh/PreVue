@@ -1,11 +1,12 @@
 import axios, { AxiosResponse } from 'axios';
+import Config from 'react-native-config';
 import { FemuxerRequest, FemuxerResponse } from '../types/app';
 
 // Constants - Updated to use your IP address
-const FEMUXER_BASE_URL = 'http://192.168.0.3:5050/internal/api/femux/v1/process';
-// You can set these to true if needed for testing
-const dryRun = false;
-const mockRun = false;
+const FEMUXER_BASE_URL = 'http://192.168.0.13:5050/internal/api/femux/v1/process';
+const runMode = (Config.AAS_RUN_MODE || '').toLowerCase().trim();  
+const dryRun = runMode === 'dryrun';
+const mockRun = runMode === 'mockrun';
 
 // Utility functions
 function randomHex(len: number): string {
@@ -30,7 +31,8 @@ function generateUUID(): string {
   });
 }
 
-function getCommonHeaders(): Record<string, string> {
+function getCommonHeaders(forceMock?: boolean): Record<string, string> {
+  const useMock = forceMock !== undefined ? forceMock : mockRun;  
   return {
     Accept: 'application/json',
     'Content-Type': 'application/json',
@@ -40,7 +42,7 @@ function getCommonHeaders(): Record<string, string> {
     'X-Client-Version': '2.3.1',
     'X-Schema-Version': 'v1',
     'X-Dry-Run': dryRun.toString(),
-    'X-Use-Mock': mockRun.toString(),
+    'X-Use-Mock': useMock.toString(),
     traceparent: generateTraceparent(),
     tracestate: 'vendor_specific_state',
     'X-Forwarded-For': '127.0.0.1'
@@ -85,9 +87,10 @@ export class FemuxerAPI {
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     operation: string,
     data: Record<string, any> = {},
-    customMetadata?: Partial<FemuxerRequest['metadata']>
+    customMetadata?: Partial<FemuxerRequest['metadata']>,
+    forceMock?: boolean
   ): Promise<FemuxerResponse<T>> {
-    const headers = getCommonHeaders();
+    const headers = getCommonHeaders(forceMock);
     const requestBody = createFemuxerRequest(operation, data, customMetadata);
     
     console.log(`[femuxer-api] ${method} ${operation}:`, JSON.stringify(requestBody, null, 2));
@@ -125,6 +128,94 @@ export class FemuxerAPI {
       console.error(`[femuxer-api] ${operation} error:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Login user through FeMuxer
+   */
+  async login(email: string, password: string): Promise<FemuxerResponse<{ serviceToken: string; user: any }>> {
+    console.log('🔐 [PREVUE-FemuxerAPI] Attempting login:', { email });
+    
+    return this.makeRequest('POST', 'ui.user.login.request', {
+      email,
+      password
+    }, {
+      correlationId: `login-${email}-${generateUUID()}`,
+      timestamp: new Date().toISOString(),
+      source: 'client',
+      version: '1.0.0'
+    }, true); // Force mock mode for login (same as web portal)
+  }
+
+  /**
+   * Get current user info through FeMuxer
+   */
+  async getCurrentUser(): Promise<FemuxerResponse<{ user: any }>> {
+    console.log('👤 [PREVUE-FemuxerAPI] Getting current user info');
+    
+    return this.makeRequest('POST', 'ui.user.me.request', {}, {
+      correlationId: `get-user-${generateUUID()}`,
+      timestamp: new Date().toISOString(),
+      source: 'client',
+      version: '1.0.0'
+    }, true); // Force mock mode for user info (same as web portal)
+  }
+
+  /**
+   * Refresh service token through FeMuxer
+   */
+  async refreshToken(): Promise<FemuxerResponse<{ serviceToken: string }>> {
+    console.log('🔄 [PREVUE-FemuxerAPI] Refreshing service token');
+    return this.makeRequest('POST', 'ui.user.token.refresh.request', {}, {
+      correlationId: `token-refresh-${generateUUID()}`,
+      timestamp: new Date().toISOString(),
+      source: 'client',
+      version: '1.0.0'
+    }, true); // keep mocked until server impl is ready
+  }
+
+  /**
+   * Register a new user via FeMuxer
+   */
+  async registerUser(email: string, password: string, firstName: string, lastName: string): Promise<FemuxerResponse<{ serviceToken?: string; user?: any }>> {
+    console.log('📝 [PREVUE-FemuxerAPI] Registering user');
+    return this.makeRequest('POST', 'ui.user.register.request', {
+      email,
+      password,
+      firstName,
+      lastName
+    }, {
+      correlationId: `register-${email}-${generateUUID()}`,
+      timestamp: new Date().toISOString(),
+      source: 'client',
+      version: '1.0.0'
+    }, true);
+  }
+
+  /**
+   * Password reset request (send code/email)
+   */
+  async requestPasswordReset(email: string): Promise<FemuxerResponse<{ status: string }>> {
+    console.log('🔐 [PREVUE-FemuxerAPI] Requesting password reset');
+    return this.makeRequest('POST', 'ui.user.password.reset.request', { email }, {
+      correlationId: `pwd-reset-${email}-${generateUUID()}`,
+      timestamp: new Date().toISOString(),
+      source: 'client',
+      version: '1.0.0'
+    }, true);
+  }
+
+  /**
+   * Password reset confirm
+   */
+  async confirmPasswordReset(email: string, code: string, newPassword: string): Promise<FemuxerResponse<{ status: string }>> {
+    console.log('✅ [PREVUE-FemuxerAPI] Confirming password reset');
+    return this.makeRequest('POST', 'ui.user.password.reset.confirm.request', { email, code, newPassword }, {
+      correlationId: `pwd-reset-confirm-${email}-${generateUUID()}`,
+      timestamp: new Date().toISOString(),
+      source: 'client',
+      version: '1.0.0'
+    }, true);
   }
 
   // Apps Operations

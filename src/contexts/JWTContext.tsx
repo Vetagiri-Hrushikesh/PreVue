@@ -9,6 +9,7 @@ import authReducer from './auth-reducer/auth';
 
 // project-imports
 import axios, { setAuthToken, cancelAllPendingRequests } from '../utils/axios';
+import { FemuxerAPI } from '../api/femuxer';
 
 // types
 import { AuthProps, JWTContextType, AuthError, LoadingState } from '../types/auth';
@@ -155,10 +156,22 @@ export const JWTProvider = ({ children }: { children: React.ReactElement }) => {
       refreshTimeoutRef.current = setTimeout(async () => {
         try {
           console.log('[JWT] Refreshing token...');
-          const response = await axios.post('/api/account/refresh');
-          const { serviceToken } = response.data;
-          await setSession(serviceToken);
-          setupTokenRefresh(serviceToken); // Setup next refresh
+          const femuxerAPI = FemuxerAPI.getInstance();
+          const response = await femuxerAPI.refreshToken();
+          let newToken: string | undefined;
+          if (response.data && typeof response.data === 'object' && 'result' in response.data) {
+            const result = (response.data as any).result;
+            if (result.success && result.data) {
+              newToken = result.data.serviceToken;
+            } else {
+              throw new Error(result.message || 'Refresh failed');
+            }
+          } else {
+            throw new Error('Invalid response format');
+          }
+          if (!newToken) throw new Error('Missing token in refresh response');
+          await setSession(newToken);
+          setupTokenRefresh(newToken); // Setup next refresh
         } catch (error) {
           console.error('[JWT] Token refresh failed:', error);
           logout();
@@ -191,11 +204,21 @@ export const JWTProvider = ({ children }: { children: React.ReactElement }) => {
   }, [state.loading]);
 
   /**
-   * Enhanced error handling
+   * Enhanced error handling for microservices architecture
    */
   const handleAuthError = useCallback((error: any, operation: string): AuthError => {
     console.error(`[JWT] ${operation} failed:`, error);
     
+    // Handle microservices error format (thrown from login/getCurrentUser functions)
+    if (error.code && error.message) {
+      return {
+        code: error.code,
+        message: error.message,
+        details: error.details || error
+      };
+    }
+    
+    // Handle HTTP response errors (legacy support)
     if (error.response) {
       const { status, data } = error.response;
       
@@ -264,8 +287,38 @@ export const JWTProvider = ({ children }: { children: React.ReactElement }) => {
         if (serviceToken && verifyToken(serviceToken)) {
           await setSession(serviceToken);
           
-          const response = await axios.get('/api/account/me');
-          const { user } = response.data;
+          // Use FeMuxer for getting user info instead of direct MockAPI call
+          const femuxerAPI = FemuxerAPI.getInstance();
+          const response = await femuxerAPI.getCurrentUser();
+          
+          let user;
+          // Handle successful user info retrieval - extract data from nested result structure
+          if (response.data && typeof response.data === 'object' && 'result' in response.data) {
+            const result = response.data.result as any;
+            if (result.success && result.data) {
+              user = result.data.user;
+            } else {
+              // Handle business logic failure (invalid token, user not found, etc.)
+              const errorMessage = result.message || 'Failed to get current user';
+              const errorCode = (result as any).error?.code || 'USER_INFO_FAILED';
+              
+              console.log('[JWT] Failed to get current user:', { errorMessage, errorCode });
+              
+              // Clear invalid token and redirect to login
+              const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+              await AsyncStorage.removeItem('serviceToken');
+              await setSession(null);
+              dispatch({ type: LOGOUT });
+              return;
+            }
+          } else {
+            console.log('[JWT] Invalid response format for getCurrentUser');
+            const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+            await AsyncStorage.removeItem('serviceToken');
+            await setSession(null);
+            dispatch({ type: LOGOUT });
+            return;
+          }
           
           dispatch({
             type: LOGIN,
@@ -317,8 +370,37 @@ export const JWTProvider = ({ children }: { children: React.ReactElement }) => {
       // Don't log sensitive data in production
       console.log('[JWT] Attempting login for:', email);
       
-      const response = await axios.post('/api/account/login', { email, password });
-      const { serviceToken, user } = response.data;
+      // Use FeMuxer for login instead of direct MockAPI call
+      const femuxerAPI = FemuxerAPI.getInstance();
+      const response = await femuxerAPI.login(email, password);
+      
+      let serviceToken, user;
+      // Check if the microservices response indicates success
+      // Handle successful login - extract data from nested result structure
+      if (response.data && typeof response.data === 'object' && 'result' in response.data) {
+        const result = response.data.result as any;
+        if (result.success && result.data) {
+          serviceToken = result.data.serviceToken;
+          user = result.data.user;
+        } else {
+          // Handle business logic failure (wrong credentials, user not found, etc.)
+          const errorMessage = result.message || 'Login failed';
+          const errorCode = (result as any).error?.code || 'LOGIN_FAILED';
+          
+          console.log('[JWT] Login failed:', { errorMessage, errorCode });
+          
+          // Create a proper error object for the auth system
+          const authError = {
+            code: errorCode,
+            message: errorMessage,
+            details: (result as any).error?.details || 'Authentication failed'
+          };
+          
+          throw authError;
+        }
+      } else {
+        throw new Error('Invalid response format');
+      }
       
       await setSession(serviceToken);
       setupTokenRefresh(serviceToken);
@@ -376,15 +458,21 @@ export const JWTProvider = ({ children }: { children: React.ReactElement }) => {
         throw new Error('Password must be at least 8 characters long');
       }
       
-      const response = await axios.post('/api/account/register', {
-        email,
-        password,
-        firstName,
-        lastName
-      });
-      
+      const femuxerAPI = FemuxerAPI.getInstance();
+      const response = await femuxerAPI.registerUser(email, password, firstName, lastName);
+      let resultData: any = null;
+      if (response.data && typeof response.data === 'object' && 'result' in response.data) {
+        const result = (response.data as any).result;
+        if (result.success) {
+          resultData = result.data || null;
+        } else {
+          throw new Error(result.message || 'Registration failed');
+        }
+      } else {
+        throw new Error('Invalid response format');
+      }
       console.log('[JWT] Registration successful for:', email);
-      return response.data;
+      return resultData;
     } catch (error) {
       const authError = handleAuthError(error, 'registration');
       dispatch({ type: SET_ERROR, payload: authError });
@@ -435,10 +523,21 @@ export const JWTProvider = ({ children }: { children: React.ReactElement }) => {
         throw new Error('Email is required');
       }
       
-      const response = await axios.post('/api/account/reset-password', { email });
-      
+      const femuxerAPI = FemuxerAPI.getInstance();
+      const response = await femuxerAPI.requestPasswordReset(email);
+      let resultData: any = null;
+      if (response.data && typeof response.data === 'object' && 'result' in response.data) {
+        const result = (response.data as any).result;
+        if (result.success) {
+          resultData = result.data || { status: 'ok' };
+        } else {
+          throw new Error(result.message || 'Password reset failed');
+        }
+      } else {
+        throw new Error('Invalid response format');
+      }
       console.log('[JWT] Password reset initiated for:', email);
-      return response.data;
+      return resultData;
     } catch (error) {
       const authError = handleAuthError(error, 'password reset');
       dispatch({ type: SET_ERROR, payload: authError });
@@ -456,20 +555,32 @@ export const JWTProvider = ({ children }: { children: React.ReactElement }) => {
       updateLoadingState('updateProfile', true);
       dispatch({ type: CLEAR_ERROR });
       
-      const response = await axios.put('/api/account/profile', profileData);
-      const { user } = response.data;
-      
+      const currentUser = state.user as any;
+      const userId = currentUser?.id || currentUser?._id || currentUser?.userId;
+      if (!userId) {
+        throw new Error('Cannot update profile: missing user ID');
+      }
+      const femuxerAPI = FemuxerAPI.getInstance();
+      const response = await femuxerAPI.updateUser(userId, profileData);
+      let updatedUser: any = { ...currentUser, ...profileData };
+      if (response.data && typeof response.data === 'object' && 'result' in response.data) {
+        const result = (response.data as any).result;
+        if (result.success && result.data) {
+          updatedUser = result.data.user || updatedUser;
+        } else if (!result.success) {
+          throw new Error(result.message || 'Profile update failed');
+        }
+      }
       // Update user in state
       dispatch({
         type: LOGIN,
         payload: {
           isLoggedIn: true,
-          user
+          user: updatedUser
         }
       });
-      
       console.log('[JWT] Profile updated successfully');
-      return response.data;
+      return { user: updatedUser } as any;
     } catch (error) {
       const authError = handleAuthError(error, 'profile update');
       dispatch({ type: SET_ERROR, payload: authError });

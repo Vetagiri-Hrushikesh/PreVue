@@ -51,6 +51,6 @@ export const Colors = {
   
   // Social Media Colors
   facebook: '#1877f2',
-  twitter: '#1da1f2',
+  github: '#24292e',
   google: '#db4437',
 } as const; 

@@ -2,6 +2,11 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
+// react-native-config: Load environment variables from .env file
+apply from: project(':react-native-config').projectDir.getPath() + "/dotenv.gradle"
+// react-native-vector-icons: bundle fonts on Android
+apply from: "../../node_modules/react-native-vector-icons/fonts.gradle"
+
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.
@@ -84,6 +89,15 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        
+        // Load environment variables from .env file (react-native-config)
+        // This makes AAS_RUN_MODE available in the native code
+        def aasRunMode = project.env.get("AAS_RUN_MODE")
+        if (aasRunMode != null) {
+            resValue("string", "AAS_RUN_MODE", aasRunMode)
+        } else {
+            resValue("string", "AAS_RUN_MODE", "")
+        }
     }
     signingConfigs {
         debug {

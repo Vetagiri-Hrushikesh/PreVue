@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Mock API URL - Using your system's IP address
 const axiosServices = axios.create({ 
-  baseURL: 'http://192.168.0.3:3002'
+  baseURL: 'http://192.168.0.13:5050'
 });
 
 // ==============================|| TOKEN MANAGEMENT ||============================== //
@@ -62,13 +62,10 @@ export const cancelAllPendingRequests = (): void => {
 
 axiosServices.interceptors.request.use(
   async (config) => {
-    console.log('[axios] Making request to:', config.baseURL + config.url, config.method?.toUpperCase());
-    
     // Use centralized token management
     const token = await getAuthToken();
     if (token) {
       config.headers['Authorization'] = `Bearer ${token}`;
-      console.log('[axios] Added auth token to request');
     } else {
       // If no token is available, this might be a logout scenario
       // We can either cancel the request or let it proceed (depending on the endpoint)
@@ -77,26 +74,19 @@ axiosServices.interceptors.request.use(
     return config;
   },
   (error) => {
-    console.log('[axios] Request interceptor error:', error);
     return Promise.reject(error);
   }
 );
 
 axiosServices.interceptors.response.use(
-  (response) => {
-    console.log('[axios] Response received:', response.config.url, response.status);
-    return response;
-  },
+  (response) => response,
   (error) => {  
-    console.log('[axios] Request failed:', error.config?.url, error.message);
-    console.log('[axios] Error details:', error.response?.status, error.response?.data);
-    
     // Only redirect on 401 if we're not already on login page
     if (error.response?.status === 401) {
       console.log('[axios] Unauthorized request, user needs to login');
       // In React Native, we'll handle this in the JWT context
     }
-    return Promise.reject((error.response && error.response.data) || error.message || 'Network Error');
+    return Promise.reject((error.response && error.response.data) || 'Wrong Services');
   }
 );
 
