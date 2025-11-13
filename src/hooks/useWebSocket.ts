@@ -434,7 +434,7 @@ export function useWebSocket(): UseWebSocketReturn {
       });
       
       // React Native specific WebSocket URL
-      const baseUrl = 'http://192.168.0.3:5050';
+      const baseUrl = 'http://192.168.0.4:5050';
       const wsUrl = baseUrl.replace('http', 'ws') + '/ws';
       
       console.log('🔵 [WS-CONNECT] WebSocket URL:', wsUrl);
@@ -632,7 +632,39 @@ export function useWebSocket(): UseWebSocketReturn {
             console.log('📊 [DEVPORTAL-WebSocket] Bundle progress update created:', bundleProgressUpdate);
             setStatusUpdates(prev => new Map(prev).set(message.correlationId, bundleProgressUpdate));
             console.log('🟢 [DEVPORTAL-WebSocket] Bundle progress update stored for correlation ID:', message.correlationId);
-          } else if (message.type === 'app.buildDebug.progress') {
+          } else if (message.type === 'app.bundle.completed') {
+            // Handle bundle completion updates
+            console.log('🎉 [DEVPORTAL-WebSocket] Bundle completion message received:', message);
+
+            const payload = {
+              ...message.data,
+              ...(message.data?.app || {})
+            };
+
+            const downloadUrl =
+              payload.downloadUrl ||
+              payload.bundleUrl ||
+              payload.url;
+
+            const isSuccess = payload.success !== false;
+
+            const bundleCompletionUpdate: WebSocketStatusUpdate = {
+              correlationId: message.correlationId,
+              status: isSuccess ? 'COMPLETED' : 'FAILED',
+              message: payload.message || 'Bundle generation completed',
+              data: {
+                ...payload,
+                downloadUrl
+              },
+              error: isSuccess ? undefined : payload.error,
+              timestamp: message.timestamp || new Date().toISOString()
+            };
+
+            console.log('📊 [DEVPORTAL-WebSocket] Bundle completion update created:', bundleCompletionUpdate);
+            setStatusUpdates(prev => new Map(prev).set(message.correlationId, bundleCompletionUpdate));
+            console.log('🟢 [DEVPORTAL-WebSocket] Bundle completion update stored for correlation ID:', message.correlationId);
+          
+          }else if (message.type === 'app.buildDebug.progress') {
             // Handle build debug progress updates
             console.log('🐛 [DEVPORTAL-WebSocket] Build debug progress update received:', message);
             

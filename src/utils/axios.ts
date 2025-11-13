@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Mock API URL - Using your system's IP address
 const axiosServices = axios.create({ 
-  baseURL: 'http://192.168.0.13:5050'
+  baseURL: 'http://192.168.0.4:5050'
 });
 
 // ==============================|| TOKEN MANAGEMENT ||============================== //
