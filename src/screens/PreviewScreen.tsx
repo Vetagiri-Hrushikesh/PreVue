@@ -254,7 +254,20 @@ const PreviewScreen: React.FC<Props> = ({ navigation, route }) => {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
+        <Pressable 
+          onPress={() => {
+            // If there's a previous screen, go back
+            // Otherwise (deep link scenario), replace with MainTabs
+            if (navigation.canGoBack()) {
+              navigation.goBack();
+            } else {
+              // Replace current screen with MainTabs
+              // This works when PreviewScreen is opened via deep link
+              navigation.replace('MainTabs');
+            }
+          }} 
+          style={styles.backButton}
+        >
           <Text style={styles.backText}>‹ Back</Text>
         </Pressable>
         <Text style={styles.title}>Preview: {appName || appId}</Text>
