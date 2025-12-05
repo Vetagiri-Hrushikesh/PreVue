@@ -3,7 +3,7 @@ import Config from 'react-native-config';
 import { FemuxerRequest, FemuxerResponse } from '../types/app';
 
 // Constants - Updated to use your IP address
-const FEMUXER_BASE_URL = 'http://192.168.0.4:5050/internal/api/femux/v1/process';
+const FEMUXER_BASE_URL = 'http://192.168.0.6:5050/internal/api/femux/v1/process';
 const runMode = (Config.AAS_RUN_MODE || '').toLowerCase().trim();  
 const dryRun = runMode === 'dryrun';
 const mockRun = runMode === 'mockrun';

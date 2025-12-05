@@ -1,5 +1,19 @@
+type LoginScreenParams = {
+  /**
+   * Optional redirect target after a successful login.
+   * Used by deep-link flow: if a user opens a preview link while logged out,
+   * we navigate to Login with a redirect back to the Preview screen.
+   */
+  redirectTo?: 'Preview';
+  redirectParams?: {
+    appId: string;
+    appName?: string;
+    bundleUrl?: string;
+  };
+};
+
 export type RootStackParamList = {
-  Login: undefined;
+  Login: LoginScreenParams | undefined;
   MainTabs: undefined;
   Preview: { appId: string; appName: string; bundleUrl?: string };
 };

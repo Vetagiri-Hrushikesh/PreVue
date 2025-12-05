@@ -434,7 +434,7 @@ export function useWebSocket(): UseWebSocketReturn {
       });
       
       // React Native specific WebSocket URL
-      const baseUrl = 'http://192.168.0.4:5050';
+      const baseUrl = 'http://192.168.0.6:5050';
       const wsUrl = baseUrl.replace('http', 'ws') + '/ws';
       
       console.log('🔵 [WS-CONNECT] WebSocket URL:', wsUrl);

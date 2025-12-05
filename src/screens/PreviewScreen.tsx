@@ -1,9 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { requireNativeComponent } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types/navigation';
 import { Colors } from '../constants/colors';
+import useAuth from '../hooks/useAuth';
+import useApps from '../hooks/useApps';
+import { useSSEContext } from '../contexts/SSEContext';
 
 const PreviewView = requireNativeComponent<any>('PreviewView');
 
@@ -11,40 +14,202 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Preview'>;
 
 /**
  * PreviewScreen - Preview of embedded React Native apps with dynamic bundle loading
+ * 
+ * Auto-triggers bundle build if bundleUrl is missing 
  */
 const PreviewScreen: React.FC<Props> = ({ navigation, route }) => {
-  const { appId, appName, bundleUrl } = route.params;
+  const { appId, appName, bundleUrl: initialBundleUrl } = route.params;
+  const { isLoggedIn } = useAuth();
+  const { buildBundle, subscribeToCorrelationIds } = useApps();
+  const { statusUpdates, isConnected } = useSSEContext();
+  
+  const [bundleUrl, setBundleUrl] = useState<string | undefined>(initialBundleUrl);
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [loadingMessage, setLoadingMessage] = useState('Preparing preview...');
 
+  // Build tracking state
+  const [isBuilding, setIsBuilding] = useState(false);
+  const [buildProgress, setBuildProgress] = useState(0);
+  const [buildMessage, setBuildMessage] = useState('');
+  const [correlationId, setCorrelationId] = useState<string | null>(null);
+  const hasTriggeredBuild = useRef(false);
+
+  // Guard: if user is not logged in, redirect to Login and remember target.
   useEffect(() => {
+    if (!isLoggedIn) {
+      navigation.replace('Login', {
+        redirectTo: 'Preview',
+        redirectParams: {
+          appId,
+          appName,
+          bundleUrl: initialBundleUrl
+        }
+      });
+      return;
+    }
+  }, [isLoggedIn, navigation, appId, appName, initialBundleUrl]);
+
+  // Auto-trigger bundle build if bundleUrl is missing 
+  useEffect(() => {
+    if (!isLoggedIn || !appId) {
+      console.log(`⏸️ [PreviewScreen] Skipping build - isLoggedIn: ${isLoggedIn}, appId: ${appId}`);
+      return;
+    }
+
+    // If we already have a bundleUrl, skip auto-build
+    if (bundleUrl) {
+      console.log(`✅ [PreviewScreen] Bundle URL already available, skipping auto-build: ${bundleUrl}`);
+      return;
+    }
+
+    // Prevent multiple build triggers
+    if (hasTriggeredBuild.current) {
+      console.log(`⏸️ [PreviewScreen] Build already triggered, skipping duplicate`);
+      return;
+    }
+
+    const triggerBuild = async () => {
+      try {
+        hasTriggeredBuild.current = true;
+        setIsBuilding(true);
+        setBuildProgress(0);
+        setBuildMessage('Starting bundle build...');
+        setLoadingMessage('Building app bundle...');
+        setIsLoading(true);
+        setHasError(false);
+
+        console.log(`🚀 [PreviewScreen] Auto-triggering bundle build for app: ${appId}`);
+        console.log(`🔍 [PreviewScreen] WebSocket connected: ${isConnected}`);
+
+        // Trigger the build - this sends the request to AppGen via FeMuxer API
+        console.log(`📤 [PreviewScreen] Calling buildBundle API...`);
+        const buildCorrelationId = await buildBundle(appId, {
+          verbose: true,
+          force: false,
+          clean: true,
+          signing: {
+            release: false // Use debug signing for preview
+          },
+          bundle: {
+            split: false,
+            universal: true
+          }
+        });
+
+        console.log(`📥 [PreviewScreen] buildBundle response:`, buildCorrelationId);
+
+        if (buildCorrelationId) {
+          setCorrelationId(buildCorrelationId);
+          console.log(`✅ [PreviewScreen] Bundle build started with correlation ID: ${buildCorrelationId}`);
+          console.log(`📡 [PreviewScreen] WebSocket connected: ${isConnected}, subscribing to updates...`);
+          
+          // Subscribe to WebSocket updates for this build
+          // This will work even if WebSocket isn't connected yet (it will auto-subscribe when connected)
+          await subscribeToCorrelationIds([buildCorrelationId]);
+          console.log(`✅ [PreviewScreen] Subscribed to WebSocket updates for correlation ID: ${buildCorrelationId}`);
+        } else {
+          console.error(`❌ [PreviewScreen] Build failed - no correlation ID received`);
+          throw new Error('Build failed - no correlation ID received');
+        }
+      } catch (error: any) {
+        console.error(`❌ [PreviewScreen] Failed to trigger bundle build:`, error);
+        console.error(`❌ [PreviewScreen] Error details:`, {
+          message: error.message,
+          stack: error.stack,
+          response: error.response?.data
+        });
+        setHasError(true);
+        setIsLoading(false);
+        setIsBuilding(false);
+        setLoadingMessage(`Failed to start bundle build: ${error.message || 'Unknown error'}`);
+        hasTriggeredBuild.current = false; // Allow retry
+      }
+    };
+
+    triggerBuild();
+    // Remove function dependencies to prevent infinite loops - functions are stable from context
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn, appId, bundleUrl, isConnected]);
+
+  // Monitor WebSocket updates for build progress
+  useEffect(() => {
+    if (!correlationId || !statusUpdates) {
+      return;
+    }
+
+    const update = statusUpdates.get(correlationId);
+    if (!update) {
+      return;
+    }
+
+    console.log(`📊 [PreviewScreen] Build update received:`, {
+      correlationId,
+      status: update.status,
+      progress: update.data?.progress,
+      message: update.message
+    });
+
+    if (update.status === 'IN_PROGRESS') {
+      const progressPercentage = update.data?.progress || 0;
+      const progressMessage = update.message || update.data?.stage || 'Building...';
+      
+      setBuildProgress(progressPercentage);
+      setBuildMessage(progressMessage);
+      setLoadingMessage(`Building app bundle... ${progressPercentage}%`);
+    } else if (update.status === 'COMPLETED') {
+      setBuildProgress(100);
+      setBuildMessage('Build completed!');
+      setLoadingMessage('Build completed! Preparing preview...');
+
+      // Extract download URL from completion data
+      const downloadUrl = update.data?.downloadUrl || update.data?.bundleUrl || update.data?.url;
+      
+      console.log(`✅ [PreviewScreen] Build completed! Download URL:`, downloadUrl);
+
+      if (downloadUrl) {
+        console.log(`🔗 [PreviewScreen] Setting bundle URL: ${downloadUrl}`);
+        setBundleUrl(downloadUrl);
+        setIsBuilding(false);
+        setLoadingMessage('Downloading app bundle...');
+      } else {
+        console.error(`❌ [PreviewScreen] Build completed but no download URL found`);
+        setHasError(true);
+        setIsLoading(false);
+        setIsBuilding(false);
+        setLoadingMessage('Build completed but no download URL available');
+      }
+    } else if (update.status === 'FAILED' || update.status === 'ERROR') {
+      console.error(`❌ [PreviewScreen] Build failed:`, update.error || update.message);
+      setHasError(true);
+      setIsLoading(false);
+      setIsBuilding(false);
+      setLoadingMessage(update.error || update.message || 'Build failed');
+      hasTriggeredBuild.current = false; // Allow retry
+    }
+  }, [correlationId, statusUpdates]);
+
+  // Handle bundle download when bundleUrl is available
+  useEffect(() => {
+    if (!isLoggedIn || !bundleUrl) {
+      return;
+    }
+
+    // Only proceed if we're not building (build is complete)
+    if (isBuilding) {
+      return;
+    }
+
     setIsLoading(true);
     setHasError(false);
     setDownloadProgress(0);
     
-    console.log(`🔍 [PreviewScreen] Received parameters:`, {
-      appId,
-      appName,
-      bundleUrl
-    });
-    
-    if (bundleUrl) {
+    console.log(`📥 [PreviewScreen] Starting download from: ${bundleUrl}`);
       setLoadingMessage('Downloading app bundle...');
-      console.log(`📥 [PreviewScreen] Starting download from: ${bundleUrl}`);
       // The native component will handle the download and extraction
       // We'll show progress updates from the native side
-    } else {
-      setLoadingMessage('Loading preview...');
-      console.log(`⚠️ [PreviewScreen] No bundle URL provided, using fallback`);
-      // Fallback to static bundle
-      const timer = setTimeout(() => {
-        setIsLoading(false);
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [appId, bundleUrl]);
+  }, [bundleUrl, isLoggedIn, isBuilding]);
 
   const handlePreviewError = (event: any) => {
     const message = event.nativeEvent?.message || event.message || 'Unknown error';
@@ -69,10 +234,21 @@ const PreviewScreen: React.FC<Props> = ({ navigation, route }) => {
   };
 
   const retryPreview = () => {
+    // Reset build trigger flag to allow retry
+    hasTriggeredBuild.current = false;
     setIsLoading(true);
     setHasError(false);
     setDownloadProgress(0);
+    setBuildProgress(0);
+    setBuildMessage('');
+    setCorrelationId(null);
+    setBundleUrl(undefined); // This will trigger auto-build again
   };
+
+  // While redirecting unauthenticated users, avoid rendering the preview UI.
+  if (!isLoggedIn) {
+    return null;
+  }
 
   return (
     <View style={styles.container}>
@@ -91,7 +267,21 @@ const PreviewScreen: React.FC<Props> = ({ navigation, route }) => {
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={Colors.primary} />
             <Text style={styles.loadingText}>{loadingMessage}</Text>
-            {bundleUrl && downloadProgress > 0 && (
+            
+            {/* Show build progress if building */}
+            {isBuilding && (
+              <>
+                <Text style={styles.loadingSubtext}>
+                  {buildMessage || `Building... ${buildProgress}%`}
+                </Text>
+                <View style={styles.progressBarContainer}>
+                  <View style={[styles.progressBar, { width: `${buildProgress}%` }]} />
+                </View>
+              </>
+            )}
+            
+            {/* Show download progress if bundle is downloading */}
+            {!isBuilding && bundleUrl && downloadProgress > 0 && (
               <>
                 <Text style={styles.loadingSubtext}>
                   {downloadProgress < 100 ? `Downloading... ${downloadProgress}%` : 'Extracting bundle...'}
@@ -101,7 +291,9 @@ const PreviewScreen: React.FC<Props> = ({ navigation, route }) => {
                 </View>
               </>
             )}
-            {!bundleUrl && (
+            
+            {/* Show generic message if waiting */}
+            {!isBuilding && !bundleUrl && !downloadProgress && (
               <Text style={styles.loadingSubtext}>Please wait while we prepare your app</Text>
             )}
           </View>

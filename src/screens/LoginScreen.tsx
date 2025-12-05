@@ -25,7 +25,7 @@ import GuestGuard from '../components/GuestGuard';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Login'>;
 
-const LoginScreen: React.FC<Props> = ({ navigation }) => {
+const LoginScreen: React.FC<Props> = ({ navigation, route }) => {
   const [email, setEmail] = useState('owner@maigha.com');
   const [password, setPassword] = useState('Owner@123');
   const [showPassword, setShowPassword] = useState(false);
@@ -43,10 +43,18 @@ const LoginScreen: React.FC<Props> = ({ navigation }) => {
       
       const trimmedEmail = email.trim();
       await login(trimmedEmail, password);
-      
+
       if (scriptedRef.current) {
-        // Navigate to MainTabs (Home screen) on successful login
-        navigation.replace('MainTabs');
+        // If we were sent here due to a deep link, redirect to the target screen.
+        const redirectTo = route.params?.redirectTo;
+        const redirectParams = route.params?.redirectParams;
+
+        if (redirectTo === 'Preview' && redirectParams) {
+          navigation.replace('Preview', redirectParams);
+        } else {
+          // Default behaviour: go to main application tabs.
+          navigation.replace('MainTabs');
+        }
       }
     } catch (err: any) {
       console.error(err);
